@@ -47,17 +47,13 @@ public:
         float bx = (float)r.x;
         float by = (float)r.y;     // cell-space top
 
-        // Clean legibility on ANY sky = a SYMMETRIC dark contour around the
-        // glyph, not a directional drop shadow (which leaves an ugly dark
-        // fringe on one side). Draw the dark contour HEAVIER so it peeks out
-        // evenly all the way around, then the bright body thinner on top. Both
-        // passes AA against the true sky, so the contour blends to nothing at
-        // its outer edge — a soft even glow, no blocky offset shadow.
-        Col contour{0.03f, 0.04f, 0.09f};
-        Col sheen = gfx::add(accent, Col{0.05f, 0.05f, 0.07f});
-        font::draw_text(p, bx, by, em_q, hhmm, contour, skybg, 0.225f);
-        font::draw_text(p, bx, by, em_q, hhmm, accent,  skybg, 0.150f);
-        font::draw_text(p, bx, by, em_q, hhmm, sheen,   skybg, 0.090f);
+        // Clean legibility on ANY sky: a single tight dark outline (drawn a
+        // touch heavier so it rings the glyph evenly) under a solid bright
+        // body. Two passes, both with the now-crisp rasterizer = sharp
+        // two-tone strokes, no sandpaper grain.
+        Col contour{0.02f, 0.03f, 0.07f};
+        font::draw_text(p, bx, by, em_q, hhmm, contour, skybg, 0.20f);
+        font::draw_text(p, bx, by, em_q, hhmm, accent,  skybg, 0.135f);
         // draw_text advances in sub-x units (2 per cell); convert to cells /2.
         float endx = bx + font::measure_em(hhmm) * em_q / 2.f;
 

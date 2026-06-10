@@ -48,13 +48,13 @@ float draw(int cols, int rows, float px, float py, float em,
         for(auto&st:pl.g->strokes){if(st.size()==1){float dx=(gx-st[0].x)*em,dy=(gy-st[0].y)*em;best=std::min(best,std::sqrt(dx*dx+dy*dy));continue;}
             for(size_t k=0;k+1<st.size();++k)best=std::min(best,seg_dist(gx,gy,st[k],st[k+1])*em);}}return best;};
     auto sub_cov=[&](float sx,float sy){float a=0;for(int sj=0;sj<3;++sj)for(int si=0;si<3;++si){
-        float d=dist(sx+(si+0.5f)/3.f,sy+(sj+0.5f)/3.f);a+=smoothstep(half+0.85f,half-0.85f,d);}return a/9.f;};
+        float d=dist(sx+(si+0.5f)/3.f,sy+(sj+0.5f)/3.f);a+=smoothstep(half+0.6f,half-0.6f,d);}return a/9.f;};
     for(int cy=cy0;cy<=cy1;++cy)for(int cx=cx0;cx<=cx1;++cx){
-        float bx=cx*SX,by=cy*SY;float covs[8];float cc=0,mx=0;
-        for(int r=0;r<4;++r)for(int col=0;col<2;++col){float cov=sub_cov(bx+col,by+r);covs[r*2+col]=cov;cc+=cov;mx=std::max(mx,cov);}
-        cc/=8.f;int mask=0;for(int i=0;i<8;++i)if(covs[i]>=0.45f)mask|=1<<i;
+        float bx=cx*SX,by=cy*SY;float covs[8];float mx=0;
+        for(int r=0;r<4;++r)for(int col=0;col<2;++col){float cov=sub_cov(bx+col,by+r);covs[r*2+col]=cov;mx=std::max(mx,cov);}
+        int mask=0;for(int i=0;i<8;++i)if(covs[i]>=0.5f)mask|=1<<i;
         if(!mask)continue;
-        float fill=std::max(cc,mx*0.6f);float a=smoothstep(0.18f,0.92f,fill);
+        float a=smoothstep(0.50f,0.78f,mx);
         sink(cx,cy,mask,covs,fg,a);
     }
     return pen/SX;
@@ -77,7 +77,7 @@ int main(){
             bool lit = mask & (1<<(r*2+col));
             // per-sub-pixel: blend by its own coverage * cell alpha for smoothness
             float cov = covs[r*2+col];
-            float aa = (0.18f+0.82f*a) * (lit?1.f:cov*0.7f);
+            float aa = (0.55f+0.45f*a) * (lit?1.f:cov*0.5f);
             aa = std::clamp(aa,0.f,1.f);
             Col ink = mix(sky,fg,aa);
             int sx=(cx*2+col)*S, sy=(cy*4+r)*S;
@@ -92,9 +92,9 @@ int main(){
     Col accent{0.95f,0.96f,1.0f};
     Col contour{0.03f,0.04f,0.09f};
     Col sheen{1.0f,1.0f,1.0f};
-    fp::draw(COLS,ROWS,1,1,em,"22:50",contour,0.255f,blit);
-    fp::draw(COLS,ROWS,1,1,em,"22:50",accent ,0.150f,blit);
-    fp::draw(COLS,ROWS,1,1,em,"22:50",sheen  ,0.090f,blit);
+    fp::draw(COLS,ROWS,1,1,em,"22:50",contour,0.20f,blit);
+    fp::draw(COLS,ROWS,1,1,em,"22:50",accent ,0.135f,blit);
+    (void)sheen;
     // seconds after the minutes, smaller, baseline-style
     float endx = 1.f + chronos::font::measure_em("22:50")*em/2.f;
     float sq = em*0.40f;

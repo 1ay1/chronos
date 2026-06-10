@@ -263,15 +263,15 @@ inline float draw_text(gfx::Painter& p, float px, float py, float height_px,
         return best;
     };
 
-    // analog coverage of one octant sub-pixel: average a 3×3 grid of
-    // SDF samples, each feathered by ~1px around the half-stroke edge.
-    // Returns 0..1 — NOT a hard threshold, so edges anti-alias.
+    // analog coverage of one octant sub-pixel: average a 3×3 grid of SDF
+    // samples with a TIGHT feather (±0.6px) so sub-pixel edges are crisp
+    // rather than a wide grey ramp (which reads as grain over a busy sky).
     auto sub_cov = [&](float sx, float sy) -> float {
         float acc = 0.f;
         for (int sj = 0; sj < 3; ++sj)
             for (int si = 0; si < 3; ++si) {
                 float d = dist(sx + (si + 0.5f) / 3.f, sy + (sj + 0.5f) / 3.f);
-                acc += gfx::smoothstep(half + 0.85f, half - 0.85f, d);
+                acc += gfx::smoothstep(half + 0.6f, half - 0.6f, d);
             }
         return acc * (1.f / 9.f);
     };
@@ -281,33 +281,28 @@ inline float draw_text(gfx::Painter& p, float px, float py, float height_px,
             float bx = cx * SX, by = cy * SY;
             // 8 octant sub-pixels: bit = r*2 + c  (r 0..3 top→bottom, c 0..1)
             int   mask = 0;
-            float cell_cov = 0.f;   // mean analog coverage over all 8 sub-px
             float max_cov  = 0.f;
             float covs[8];
             for (int r = 0; r < 4; ++r)
                 for (int col = 0; col < 2; ++col) {
                     float cov = sub_cov(bx + col, by + r);
                     covs[r * 2 + col] = cov;
-                    cell_cov += cov;
                     max_cov = std::max(max_cov, cov);
                 }
-            cell_cov *= (1.f / 8.f);
-            // Pick the block shape from the sub-pixels above a threshold. A
-            // higher floor rejects faint fringe sub-pixels (the speckle around
-            // glyph edges) so only sub-pixels genuinely on the stroke light up.
+            // A sub-pixel is lit at half-coverage. The octant BLOCK SHAPE then
+            // carries the anti-aliasing geometrically (a half-covered cell
+            // shows a half block, not a grey full block) — so the ink itself
+            // can stay near-solid, which is what kills the sandpaper grain.
             for (int i = 0; i < 8; ++i)
-                if (covs[i] >= 0.45f) mask |= 1 << i;
+                if (covs[i] >= 0.5f) mask |= 1 << i;
             if (mask == 0) continue;             // truly empty — sky shows through
 
             Col bg = bg_fn(cx, cy);
-            // True coverage AA: a fully-interior cell (cell_cov~1) gets solid
-            // ink; an edge cell that's only ~30% covered melts most of the way
-            // back to the sky. Using the MEAN cell coverage (not just the lit
-            // sub-pixels) is what kills the blocky staircase — partial cells
-            // read as smooth grey ramps, like real sub-pixel antialiasing.
-            float fill = std::max(cell_cov, max_cov * 0.6f);
-            float a = gfx::smoothstep(0.18f, 0.92f, fill);
-            Col ink = gfx::mix(bg, fg, 0.06f + 0.94f * a);
+            // Only the very faintest sliver cells (max_cov barely over the
+            // threshold) soften toward the sky; everything genuinely on the
+            // stroke gets full ink. No per-cell grey ramp = clean strokes.
+            float a = gfx::smoothstep(0.50f, 0.78f, max_cov);
+            Col ink = gfx::mix(bg, fg, 0.55f + 0.45f * a);
             p.glyph_cell(cx, cy, octant_glyph(mask), ink, bg);
         }
     }
