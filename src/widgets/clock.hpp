@@ -90,8 +90,8 @@ public:
             ss_cells_.clear();
             CaptureSink cap{p.cols(), p.rows(), &ss_cells_};
             auto skybg = [&](int, int cy) { return sky_bg(sun_alt, cy, ph); };
-            font::draw_text(cap, endx + 1.0f, secs_y, secs_q, ss, contour, skybg, 0.22f);
-            font::draw_text_grad(cap, endx + 1.0f, secs_y, secs_q, ss, top_ink, bot_ink,
+            font::draw_text(cap, endx + 1.8f, secs_y, secs_q, ss, contour, skybg, 0.22f);
+            font::draw_text_grad(cap, endx + 1.8f, secs_y, secs_q, ss, top_ink, bot_ink,
                                  skybg, 0.135f);
         }
         // replay the cached glyph cells onto the real canvas
