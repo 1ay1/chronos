@@ -45,7 +45,6 @@ public:
         const float horizon_y = PH * 0.62f;
         const float sun_alt = (float)c.sun.altitude;
         const bool  night = sun_alt < -6.f;
-        const float star_vis = gfx::smoothstep(0.f, -12.f, sun_alt);
 
         auto place = [&](double az, double alt) {
             float ax = std::clamp((float)((az - 90.0) / 180.0), -0.2f, 1.2f);
@@ -109,14 +108,20 @@ public:
                     float shadow = gfx::smoothstep(-lit, -lit + 0.6f, dxm / 2.0f);
                     col = gfx::mix(col, gfx::mix(gfx::scale(mc, 0.25f), mc, shadow), disc);
                 }
-                // stars: varied brightness/colour + a faint Milky-Way band
-                if (star_vis > 0.01f && py < horizon_y * 0.98f) {
+                // stars: varied brightness/colour + a faint Milky-Way band.
+                // Gated to REAL darkness: at dusk (sun -2..-6) the sky still has
+                // sunset colour, and a faint star here gets snapped up to a full
+                // band by the later posterize → ugly hard cream blocks. So ramp
+                // star_vis from a deeper angle and require a solid floor before
+                // drawing anything.
+                float star_show = gfx::smoothstep(-7.f, -13.f, sun_alt);
+                if (star_show > 0.05f && py < horizon_y * 0.96f) {
                     // Milky-Way: a soft diagonal band of unresolved glow
                     float mwd = std::abs((py - horizon_y * 0.35f) - (px - PW * 0.5f) * 0.28f);
                     float mw = gfx::smoothstep(PH * 0.16f, 0.f, mwd);
                     float mwn = gfx::fbm(px * 0.06f, py * 0.12f + 5.f);
                     col = gfx::add(col, gfx::scale(Col{0.18f,0.20f,0.30f},
-                                   mw * mwn * 0.5f * star_vis));
+                                   mw * mwn * 0.5f * star_show));
                     // discrete stars on a fine grid, sub-cell positioned
                     float gx = std::floor(px), gy = std::floor(py);
                     float hs = gfx::hash2(gx * 1.7f, gy * 2.3f);
@@ -132,7 +137,7 @@ public:
                         float dpt = std::hypot(px - (gx + sxp), py - (gy + syp));
                         float pt = gfx::smoothstep(0.9f + bright * 0.6f, 0.f, dpt);
                         col = gfx::add(col, gfx::scale(scol,
-                                       pt * (0.4f + bright) * tw * star_vis));
+                                       pt * (0.4f + bright) * tw * star_show));
                     }
 
                     // shooting stars: every ~6s a meteor crosses the sky. The
@@ -159,11 +164,13 @@ public:
                             float along = rx * ux + ry * uy;           // <=0 behind head
                             float perp  = std::abs(rx * uy - ry * ux);
                             float tail  = 9.0f;
-                            if (along <= 0.5f && along > -tail && perp < 1.4f) {
+                            // clamp the streak above the horizon (no meteors on land)
+                            if (py < horizon_y * 0.96f &&
+                                along <= 0.5f && along > -tail && perp < 1.4f) {
                                 float head = gfx::smoothstep(2.0f, 0.f, std::hypot(rx, ry));
                                 float body = gfx::smoothstep(tail, 0.f, -along) *
                                              gfx::smoothstep(1.4f, 0.f, perp);
-                                float fade = (1.f - life) * star_vis;
+                                float fade = (1.f - life) * star_show;
                                 col = gfx::add(col, gfx::scale(
                                     Col{0.95f, 0.97f, 1.0f}, (head + body * 0.7f) * fade));
                             }
