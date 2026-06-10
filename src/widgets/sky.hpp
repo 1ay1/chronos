@@ -335,23 +335,29 @@ public:
         };
 
         // The sky shader is expensive (per-pixel fbm clouds, glow, stars). It
-        // also evolves slowly — sun crawls, clouds drift, stars twinkle gently.
-        // So we cache the computed top/bot colour per cell and only recompute
-        // when the scene meaningfully changed: a resize, or ~8 sky-updates/sec
-        // of animation progress. maya's cell diff then only re-emits the few
-        // cells that actually changed between cached grids — paint stays cheap
-        // at 30fps while the heavy shading runs ~8fps.
+        // also evolves slowly, so we only RE-SHADE ~6×/sec. But blitting the
+        // same cached grid until the next shade makes motion jump (the lag).
+        // Fix: keep the LAST two shaded keyframes and temporally INTERPOLATE
+        // between them every frame by the fractional progress past the current
+        // keyframe. The heavy shader stays at 6fps; the displayed frame slides
+        // continuously at the full 30fps — smooth motion at no extra shade cost.
         const size_t need = size_t(r.w) * r.h;
-        bool stale = cache_.size() != need * 2 || cw_ != r.w || ch_ != r.h;
-        // animation clock quantised to ~1/6 s (smooth cloud drift); sun altitude
-        // quantised to 0.05°. The shader is gated by these so heavy per-pixel
-        // work runs ~6fps while the cheap blit re-asserts at the full 30fps.
-        long anim_q = (long)std::floor(c.anim * 6.f);
+        bool resized = cache_.size() != need * 2 || cw_ != r.w || ch_ != r.h;
+        // keyframe index advances ~6×/sec; sun altitude quantised to 0.05°.
+        constexpr float KF_HZ = 6.f;
+        long anim_q = (long)std::floor(c.anim * KF_HZ);
         long sun_q  = (long)std::floor(sun_alt * 20.f);
-        if (anim_q != anim_q_ || sun_q != sun_q_) stale = true;
-        if (stale) {
-            cache_.resize(need * 2);
-            cw_ = r.w; ch_ = r.h; anim_q_ = anim_q; sun_q_ = sun_q;
+        bool new_kf = (anim_q != anim_q_ || sun_q != sun_q_);
+        if (resized) {
+            cache_.assign(need * 2, Col{});
+            cache_prev_.assign(need * 2, Col{});
+            cw_ = r.w; ch_ = r.h;
+            anim_q_ = LONG_MIN;   // force a fresh shade below
+            new_kf = true;
+        }
+        if (new_kf) {
+            std::swap(cache_prev_, cache_);   // old current → prev
+            anim_q_ = anim_q; sun_q_ = sun_q;
             for (int cy = 0; cy < r.h; ++cy)
                 for (int cx = 0; cx < r.w; ++cx) {
                     float xl = float(r.x + cx);
@@ -359,17 +365,19 @@ public:
                     cache_[i]     = sample_row(xl, cy * 2 + 0.5f);
                     cache_[i + 1] = sample_row(xl, cy * 2 + 1.5f);
                 }
+            if (resized)  // first shade has no valid prev — seed it equal
+                cache_prev_ = cache_;
         }
-        // Re-blit the cached grid every frame. The expensive part (the shader)
-        // is gated by `stale`; the blit just re-asserts the sky colours so any
-        // cell a foreground widget vacated this frame (shrinking clock digits,
-        // dismissed modal) is correctly restored to sky. maya's cell diff drops
-        // the cells identical to last frame, so the wire cost is only the few
-        // that actually changed.
+        // fractional time since the current keyframe began, 0..1 across one KF.
+        float frac = std::clamp((c.anim * KF_HZ) - float(anim_q_), 0.f, 1.f);
+        // Blit prev→cur interpolated. maya's cell diff drops cells identical to
+        // last frame, so the wire cost is only the cells that actually changed.
         for (int cy = 0; cy < r.h; ++cy)
             for (int cx = 0; cx < r.w; ++cx) {
                 size_t i = (size_t(cy) * r.w + cx) * 2;
-                p.cell(r.x + cx, r.y + cy, cache_[i], cache_[i + 1]);
+                Col top = gfx::mix(cache_prev_[i],     cache_[i],     frac);
+                Col bot = gfx::mix(cache_prev_[i + 1], cache_[i + 1], frac);
+                p.cell(r.x + cx, r.y + cy, top, bot);
             }
 
         // ── bird flock (daytime overlay) ───────────────────────────────────
@@ -404,7 +412,8 @@ public:
     }
 
 private:
-    std::vector<Col> cache_;
+    std::vector<Col> cache_;        // current shaded keyframe
+    std::vector<Col> cache_prev_;   // previous keyframe (for temporal lerp)
     int  cw_ = -1, ch_ = -1;
     long anim_q_ = LONG_MIN, sun_q_ = LONG_MIN;
 };
