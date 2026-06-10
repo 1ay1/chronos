@@ -429,18 +429,19 @@ private:
         }
         int lw = (int)gfx::utf8_cols(spaced);
 
-        // filled accent chip behind the label: dark ink on the bright accent,
-        // one cell of padding each side (mirrors the today-pill on the grid).
-        Col chip   = accent;
-        Col chip_d = gfx::scale(accent, 0.55f);          // shaded chip underside
-        Col ink    = gfx::scale(bg, 0.5f);               // near-black label ink
+        // filled accent chip behind the label. The chip is a SOLID, uniform
+        // bright fill (both sub-pixels the same colour) and the label is pure
+        // near-black ink — a two-tone chip or a tinted ink muddies the small
+        // glyph strokes and kills legibility. One cell of padding each side.
+        Col chip = accent;
+        Col ink  = {0.04f, 0.04f, 0.06f};                // pure near-black label
         int cx0 = x, cx1 = x + lw + 2;                   // chip spans [cx0, cx1)
         for (int cx = cx0; cx < cx1; ++cx)
-            p.cell(cx, y, chip, chip_d);                 // 2 sub-px = subtle sheen
+            p.text(cx, y, " ", ink, chip);              // solid bright chip fill
         p.text(x + 1, y, spaced, ink, chip, true);
 
-        // bright leading edge bar + a soft glow cell right of the chip
-        p.cell(cx1, y, gfx::scale(accent, 0.75f), gfx::scale(accent, 0.35f));
+        // a soft glow cell right of the chip for a little dimensional pop
+        p.text(cx1, y, " ", ink, gfx::scale(accent, 0.45f));
 
         // gradient hairline from after the chip to the panel edge: starts at the
         // accent and eases down into the background so it reads as a fade, not a
