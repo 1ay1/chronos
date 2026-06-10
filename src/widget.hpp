@@ -10,6 +10,7 @@
 
 #include "gfx.hpp"
 #include "astro.hpp"
+#include "weather.hpp"
 
 #include <ctime>
 #include <string>
@@ -67,6 +68,10 @@ struct Ctx {
     chronos::astro::MoonPhase moon{};
     chronos::astro::SunTimes sun_times{};
     double tz_offset = 0;
+
+    // live weather (Open-Meteo), refreshed off-thread; valid==false until the
+    // first successful fetch lands.
+    chronos::weather::Weather weather{};
 };
 
 // ── widget base ──────────────────────────────────────────────────────────────

@@ -48,7 +48,8 @@ Dawn breaks, the sun climbs and sets, stars come out — in seconds.
 
 ## Build
 
-Requires a C++26 compiler (GCC 15+ recommended) and CMake.
+Requires a C++26 compiler (GCC 15+ recommended), CMake, and **libcurl**
+(`libcurl4-openssl-dev` on Debian/Ubuntu) for the live weather feed.
 
 ```bash
 git clone --recurse-submodules <this repo>
@@ -89,6 +90,16 @@ chronos
 
 Put those in your shell rc and it's a permanent fixture of your rice.
 
+## Live weather
+
+The weather card shows **real current conditions** — temperature, feels-like,
+today's high/low, humidity, and wind — pulled from the
+[Open-Meteo](https://open-meteo.com) public API (no key, no signup) for your
+`CHRONOS_LAT`/`CHRONOS_LON`. Fetching happens on a background thread so the UI
+never stalls; data refreshes every ~10 minutes. Until the first fetch lands (or
+if you're offline) the card shows a quiet “fetching…” / “offline” state and keeps
+the last good reading.
+
 ## How it works
 
 Every section is a self-contained **graphical widget** that paints itself into a
@@ -107,11 +118,13 @@ src/
     location.hpp       top-right place pill + live/warp badge
     sun.hpp            sun-path arc card + sunrise/sunset/daylight
     moon.hpp           phase-accurate moon disc + illumination gauge
+    weather.hpp        live conditions card (Open-Meteo, real data)
     calendar.hpp       month-grid card (h/l to navigate)
     clocks.hpp         multi-zone world-clocks card
     statusbar.hpp      bottom keybar
   astro.hpp            sun position, sunrise/sunset, moon phase (no deps)
   timeutil.hpp         world-clock zones, tz offset
+  weather.hpp          Open-Meteo fetch service (libcurl, background thread)
   main.cpp             App: owns widgets, builds Ctx, lays out, routes events
 ```
 

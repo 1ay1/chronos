@@ -13,11 +13,16 @@ set(MAYA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(MAYA_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
 add_subdirectory(maya)
 
+# libcurl for real weather data (Open-Meteo public API) + threads for the
+# background fetch worker.
+find_package(CURL REQUIRED)
+find_package(Threads REQUIRED)
+
 add_executable(chronos
     src/main.cpp
 )
 target_include_directories(chronos PRIVATE src)
-target_link_libraries(chronos PRIVATE maya)
+target_link_libraries(chronos PRIVATE maya CURL::libcurl Threads::Threads)
 target_compile_options(chronos PRIVATE -O2)
 
 install(TARGETS chronos RUNTIME DESTINATION bin)

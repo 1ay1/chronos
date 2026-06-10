@@ -15,12 +15,14 @@
 #include "widget.hpp"
 #include "astro.hpp"
 #include "timeutil.hpp"
+#include "weather.hpp"
 
 #include "widgets/sky.hpp"
 #include "widgets/clock.hpp"
 #include "widgets/location.hpp"
 #include "widgets/sun.hpp"
 #include "widgets/moon.hpp"
+#include "widgets/weather.hpp"
 #include "widgets/calendar.hpp"
 #include "widgets/clocks.hpp"
 #include "widgets/statusbar.hpp"
@@ -49,9 +51,13 @@ public:
         location_ = std::make_unique<ui::LocationWidget>();
         sun_      = std::make_unique<ui::SunArcWidget>();
         moon_     = std::make_unique<ui::MoonWidget>();
+        weather_  = std::make_unique<ui::WeatherWidget>();
         calendar_ = std::make_unique<ui::CalendarWidget>();
         clocks_   = std::make_unique<ui::WorldClocksWidget>();
         statusbar_= std::make_unique<ui::StatusBarWidget>();
+
+        // kick off the first real weather fetch for our location
+        wx_.configure(lat_, lon_);
     }
 
     void set_pool(StylePool& pool) { pool_ = &pool; }
@@ -72,6 +78,7 @@ public:
     void tick(float dt) {
         anim_ += dt;
         time_warp_ += warp_rate_ * dt;
+        wx_.tick();   // refreshes live weather off-thread when due
     }
 
     void paint(Canvas& cv, int W, int H) {
@@ -90,6 +97,7 @@ public:
         c.tz_offset = chronos::timeutil::local_utc_offset_hours(c.now);
         c.sun_times = chronos::astro::sun_times(
             c.lt.tm_year + 1900, c.lt.tm_mon + 1, c.lt.tm_mday, lat_, lon_, c.tz_offset);
+        c.weather = wx_.snapshot();
 
         // ── layout ──────────────────────────────────────────────────────────
         ui::Rect full{0, 0, W, H};
@@ -103,16 +111,35 @@ public:
         clock_->paint(p, {2, 1, W - 4, 11}, c);
         location_->paint(p, {2, 1, W - 4, 2}, c);
 
-        // bottom dashboard cards: sun arc + moon, side by side, always on
+        // bottom dashboard cards: sun arc, moon, and live weather. They sit
+        // side by side; on a narrow terminal there isn't room for three, so we
+        // drop down to sun + weather (the two most useful), then sun alone.
         int card_h = std::min(8, std::max(6, (H - 12) / 2 + 4));
         int card_y = content.bottom() - card_h - 1;
         if (card_y > 9) {
             int gap = 2, side = 4;
-            int avail = W - side * 2 - gap;
-            int sun_w = std::clamp(avail * 5 / 9, 24, 48);
-            int moon_w = std::clamp(avail - sun_w, 22, 44);
-            sun_->paint(p,  {side, card_y, sun_w, card_h}, c);
-            moon_->paint(p, {side + sun_w + gap, card_y, moon_w, card_h}, c);
+            int avail = W - side * 2;
+            if (avail >= 78) {
+                // three cards: sun | moon | weather
+                int inner = avail - gap * 2;
+                int sun_w = std::clamp(inner * 4 / 10, 24, 46);
+                int wx_w  = std::clamp(inner * 3 / 10, 24, 40);
+                int moon_w = std::max(20, inner - sun_w - wx_w);
+                int x = side;
+                sun_->paint(p,     {x, card_y, sun_w, card_h}, c); x += sun_w + gap;
+                moon_->paint(p,    {x, card_y, moon_w, card_h}, c); x += moon_w + gap;
+                weather_->paint(p, {x, card_y, wx_w, card_h}, c);
+            } else if (avail >= 52) {
+                // two cards: sun | weather
+                int inner = avail - gap;
+                int sun_w = std::clamp(inner * 5 / 9, 24, 48);
+                int wx_w  = std::max(22, inner - sun_w);
+                sun_->paint(p,     {side, card_y, sun_w, card_h}, c);
+                weather_->paint(p, {side + sun_w + gap, card_y, wx_w, card_h}, c);
+            } else {
+                // one card: weather (real data wins the scarce space)
+                weather_->paint(p, {side, card_y, avail, card_h}, c);
+            }
         }
 
         // full-screen calendar overlay
@@ -144,9 +171,12 @@ private:
     std::unique_ptr<ui::LocationWidget>    location_;
     std::unique_ptr<ui::SunArcWidget>      sun_;
     std::unique_ptr<ui::MoonWidget>        moon_;
+    std::unique_ptr<ui::WeatherWidget>     weather_;
     std::unique_ptr<ui::CalendarWidget>    calendar_;
     std::unique_ptr<ui::WorldClocksWidget> clocks_;
     std::unique_ptr<ui::StatusBarWidget>   statusbar_;
+
+    chronos::weather::WeatherService       wx_;   // live weather (Open-Meteo)
 };
 
 int main() {
