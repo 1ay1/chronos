@@ -91,16 +91,34 @@ Put those in your shell rc and it's a permanent fixture of your rice.
 
 ## How it works
 
-- `src/astro.hpp` — sun altitude/azimuth (continuous solar position), sunrise /
-  sunset (NOAA), moon phase (synodic age). No external deps.
-- `src/timeutil.hpp` — world-clock zones (from the OS tz database) and helpers.
-- `src/main.cpp` — the sky shader (`shade_pixel`), the HUD, the panels, and the
-  `canvas_run` animation loop. The sky model lives in `namespace sky`; recolour
-  the whole app by editing the keyframed `bands[]` palette there.
+Every section is a self-contained **graphical widget** that paints itself into a
+rectangle via a shared `Painter` (the only thing that touches maya's half-block
+canvas). Adding a new panel is just a new `Widget` subclass.
 
+```
+src/
+  gfx.hpp              Col + colour math + noise + Painter
+                       (pixels, discs, rounded panels, gauges, sparklines,
+                        glow-text-over-gradient)
+  widget.hpp           Rect, per-frame Ctx, the Widget base interface
+  widgets/
+    sky.hpp            living gradient sky + sun/moon/stars/clouds/horizon
+    clock.hpp          big seven-segment clock + date
+    location.hpp       top-right place pill + live/warp badge
+    sun.hpp            sun-path arc card + sunrise/sunset/daylight
+    moon.hpp           phase-accurate moon disc + illumination gauge
+    calendar.hpp       month-grid card (h/l to navigate)
+    clocks.hpp         multi-zone world-clocks card
+    statusbar.hpp      bottom keybar
+  astro.hpp            sun position, sunrise/sunset, moon phase (no deps)
+  timeutil.hpp         world-clock zones, tz offset
+  main.cpp             App: owns widgets, builds Ctx, lays out, routes events
+```
+
+The `App` composes the widgets, computes the shared astronomy once per frame
+into a `Ctx`, assigns each widget a `Rect`, and dispatches `paint` / `on_key`.
 The renderer is single-threaded by design: maya's SIMD cell-diff only ships the
-cells that actually changed each frame, so a slowly-evolving sky costs almost
-nothing on the wire.
+cells that actually changed, so a slowly-evolving sky costs almost nothing.
 
 ## License
 
