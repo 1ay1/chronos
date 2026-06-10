@@ -47,16 +47,25 @@ public:
         const int W = r.w, H = r.h;
         float sun_alt = (float)c.sun.altitude;
 
-        // 1) frosted backdrop: dim the live sky to a deep glass, with a subtle
-        //    vertical gradient so the screen has depth.
+        // 1) frosted backdrop: a deep twilight-glass gradient with real depth.
+        //    Top is a cool indigo, easing to a slightly warmer, darker base at
+        //    the bottom; a faint warm bloom sits low-centre like a horizon glow
+        //    bleeding through the glass. This gives the panel atmosphere instead
+        //    of a flat dark fill.
+        Col deep_top{0.045f, 0.055f, 0.105f};   // cool indigo glass
+        Col deep_bot{0.020f, 0.022f, 0.045f};   // darker, faintly warm base
         for (int cy = 0; cy < H; ++cy) {
-            float v = float(cy) / std::max(1, H - 1);
-            Col top = gfx::mix(sky_bg(sun_alt, cy * 2,     H * 2), th.scrim, 0.86f);
-            Col bot = gfx::mix(sky_bg(sun_alt, cy * 2 + 1, H * 2), th.scrim, 0.86f);
-            // darken further toward the bottom for a vignette
-            float vig = 0.10f + 0.10f * v;
-            top = gfx::scale(top, 1.f - vig);
-            bot = gfx::scale(bot, 1.f - vig);
+            float v = float(cy) / std::max(1, H - 1);          // 0 top .. 1 bottom
+            float ev = v * v * (3.f - 2.f * v);                // eased gradient
+            Col base = gfx::mix(deep_top, deep_bot, ev);
+            // a soft warm horizon bloom low and centred for depth
+            float hb = gfx::smoothstep(0.55f, 0.95f, v) *
+                       (1.f - gfx::smoothstep(0.92f, 1.0f, v));
+            base = gfx::add(base, gfx::scale(Col{0.10f, 0.06f, 0.03f}, hb * 0.5f));
+            // subtle vertical sub-pixel split so the gradient is smooth
+            Col top = base;
+            Col bot = gfx::mix(base, gfx::mix(deep_top, deep_bot,
+                               std::min(1.f, ev + 0.5f / H)), 1.f);
             for (int cx = 0; cx < W; ++cx)
                 p.cell(r.x + cx, r.y + cy, top, bot);
         }
@@ -153,7 +162,7 @@ private:
         static const char* WD[7] = {"MON","TUE","WED","THU","FRI","SAT","SUN"};
         int wd_y = header_bottom;
         for (int i = 0; i < 7; ++i) {
-            Col cc = (i >= 5) ? th.bad : th.text_dim;
+            Col cc = (i >= 5) ? gfx::mix(th.cool, th.text_dim, 0.35f) : th.text_dim;
             int x = gx + i * cell_w + (cell_w - 3) / 2;
             p.text(x, wd_y, WD[i], cc, bg(x, wd_y), true);
         }
@@ -213,15 +222,31 @@ private:
                         bool is_cursor, bool is_today, bool weekend) {
         const Theme& th = c.theme;
         (void)c;
-        // Flat tile colors — a constant glass, NOT the per-row sky scrim, so
-        // every cell reads with identical brightness top-to-bottom.
-        Col tile_bg{0.055f, 0.065f, 0.105f};          // dark blue-grey glass
-        Col card = in_month ? tile_bg : gfx::scale(tile_bg, 0.45f);
-        if (is_today)  card = gfx::mix(tile_bg, th.accent, 0.22f);
-        if (is_cursor) card = gfx::mix(tile_bg, th.accent, 0.28f);
-        for (int cy = y; cy < y + h; ++cy)
+        // Glassy tiles: a soft vertical gradient (lighter top → darker bottom)
+        // reads as frosted glass with a sheen, not a flat fill. In-month cells
+        // are a cool blue-grey; out-of-month days recede into the backdrop.
+        Col tile_top{0.075f, 0.090f, 0.140f};
+        Col tile_bot{0.040f, 0.050f, 0.090f};
+        if (!in_month) { tile_top = gfx::scale(tile_top, 0.42f); tile_bot = gfx::scale(tile_bot, 0.42f); }
+        // weekends get a faint cool wash so they read distinct without shouting
+        if (weekend && in_month) {
+            tile_top = gfx::mix(tile_top, th.cool, 0.06f);
+            tile_bot = gfx::mix(tile_bot, th.cool, 0.04f);
+        }
+        // today: warm amber-tinted glass; cursor: accent-blue glass. Today uses
+        // WARM so it never visually merges with the (cool) cursor highlight.
+        if (is_today)  { tile_top = gfx::mix(tile_top, th.warm, 0.16f);
+                         tile_bot = gfx::mix(tile_bot, th.warm, 0.10f); }
+        if (is_cursor) { tile_top = gfx::mix(tile_top, th.accent, 0.26f);
+                         tile_bot = gfx::mix(tile_bot, th.accent, 0.18f); }
+        Col card = tile_top;   // representative card colour for text backdrops
+        for (int cy = y; cy < y + h; ++cy) {
+            // per-row interpolation down the tile for the glass gradient
+            float tt = (h > 1) ? float(cy - y) / float(h - 1) : 0.f;
+            Col rowc = gfx::mix(tile_top, tile_bot, tt * tt * (3.f - 2.f * tt));
             for (int cx = x; cx < x + w; ++cx)
-                p.text(cx, cy, " ", card, card);
+                p.text(cx, cy, " ", rowc, rowc);
+        }
 
         // cursor: a rounded accent outline hugging the card (only when the
         // card is tall enough to host a border without crushing the body).
@@ -244,19 +269,20 @@ private:
 
         Col num_fg;
         if (!in_month)      num_fg = gfx::scale(th.text_dim, 0.55f);
-        else if (weekend)   num_fg = gfx::mix(th.bad, th.text, 0.20f);
+        else if (weekend)   num_fg = gfx::mix(th.cool, th.text, 0.30f);   // cool, not alarming red
         else                num_fg = th.text;
-        if (is_cursor)      num_fg = th.text;
+        if (is_cursor)      num_fg = Col{1,1,1};
 
         // day number, top-left (inset 1 when the card has a border)
         std::string ds = std::format("{}", day);
         int pad = boxed ? 1 : 0;
         int ndx = x + 1 + pad, ndy = y + pad;
         if (is_today) {
+            // warm-gold pill behind dark text — the one hot accent on the grid
             int chip_w = (int)ds.size() + 2;
             for (int cx = ndx; cx < ndx + chip_w && cx < x + w; ++cx)
-                p.text(cx, ndy, " ", th.accent, th.accent);
-            p.text(ndx + 1, ndy, ds, th.panel_bg, th.accent, true);
+                p.text(cx, ndy, " ", th.warm, th.warm);
+            p.text(ndx + 1, ndy, ds, gfx::scale(th.panel_bg, 0.5f), th.warm, true);
         } else {
             p.text(ndx, ndy, ds, num_fg, card, in_month || is_cursor);
         }
@@ -270,7 +296,7 @@ private:
             std::time_t noon = timeutil::make_midnight(year, month, day) + 43200;
             auto mp = chronos::astro::moon_phase(noon);
             const char* sym = moon_symbol(mp.frac);
-            Col mc = gfx::mix(gfx::scale(th.text_dim, 0.80f), th.cool, (float)mp.illum);
+            Col mc = gfx::mix(gfx::scale(th.text_dim, 1.05f), th.cool, (float)mp.illum);
             int mx = x + w - 2 - pad, my = y + h - 1 - pad;
             p.text(mx, my, sym, mc, card);
         }
@@ -280,7 +306,9 @@ private:
     void paint_rail(Painter& p, const Rect& r, const Ctx& c,
                     int year, int month, int cursor, int dim) {
         const Theme& th = c.theme;
-        Col bg = th.panel_bg;
+        // A slightly lifted glass so the rail reads as a distinct panel sitting
+        // ON the backdrop, not blended into it.
+        Col bg = gfx::mix(th.panel_bg, Col{0.06f, 0.07f, 0.12f}, 0.6f);
         p.panel(r.x, r.y, r.w, r.h, bg, th.panel_border);
         Rect in = r.inset(1);
         int x = in.x + 1, y = in.y;
@@ -375,9 +403,13 @@ private:
     void rule(Painter& p, int x, int y, int w, Col c, Col bg) {
         for (int i = 0; i < w; ++i) p.text(x + i, y, "\u2500", c, bg);
     }
+    // backdrop colour behind grid chrome (weekday row, rules, header). Matches
+    // the deep twilight-glass background so text sits flush on it.
     Col scrim_bg(Painter& p, float sun_alt, int cy) {
-        Col s = sky_bg(sun_alt, cy * 2, p.rows() * 2);
-        return gfx::mix(s, Col{0.02f,0.02f,0.05f}, 0.84f);
+        (void)sun_alt;
+        float v = float(cy) / std::max(1, p.rows() - 1);
+        float ev = v * v * (3.f - 2.f * v);
+        return gfx::mix(Col{0.045f,0.055f,0.105f}, Col{0.020f,0.022f,0.045f}, ev);
     }
 
     // ── calendar math ───────────────────────────────────────────────────────
