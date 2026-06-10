@@ -1,45 +1,50 @@
 <h1 align="center">⟡ chronos</h1>
 
 <p align="center">
-  A pretty terminal dashboard for time, calendar, and sky —<br>
-  the go-to glance-panel for your Linux rice.
+  A <b>living sky</b> for your terminal — a graphical weather & clock app<br>
+  in the spirit of a native phone clock/weather screen, drawn pixel-by-pixel.
 </p>
 
 <p align="center">
-  <sub>Built on <a href="https://github.com/1ay1/maya">maya</a> · C++26 · truecolor · zero runtime deps</sub>
+  <sub>Built on <a href="https://github.com/1ay1/maya">maya</a> · C++26 · half-block truecolor renderer · real astronomy</sub>
 </p>
 
 ---
 
-```
-  ╭──────────────────────────────────────────╮  ╭──────────────────────────────────╮
-  │  ⟡ CHRONOS    WEDNESDAY · June 10, 2026   │  │  ▌ WORLD CLOCKS                   │
-  │                                           │  │  Local ☀ 16:42  Wed 10 Jun        │
-  │    █   ██       █  █  ██                   │  │  UTC   ☀ 14:42  Wed 10 Jun        │
-  │   ██  █      █  █  █ █  █                  │  │  NYC   ☀ 10:42  Wed 10 Jun        │
-  │    █  ███       ████   █                   │  │  TOK   ☽ 23:42  Wed 10 Jun        │
-  │          :22                              │  │  SYD   ☽ 00:42  Thu 11 Jun        │
-  ╰──────────────────────────────────────────╯  ╰──────────────────────────────────╯
-  ╭──────────────────────────────────────────╮  ╭──────────────────────────────────╮
-  │  ▌ CALENDAR                               │  │  ▌ SKY                            │
-  │       June 2026                           │  │  ↑ 05:44                22:16 ↓   │
-  │  Mo Tu We Th Fr Sa Su                     │  │  ···········☀‾‾‾‾‾‾               │
-  │   8  9 10 11 12 13 14                      │  │  daylight 16h 32m                 │
-  │  15 16 17 18 19 20 21                      │  │  🌘 Waning crescent               │
-  │  22 23 24 25 26 27 28                      │  │  ███░░░░░░░░░░░ 23%               │
-  ╰──────────────────────────────────────────╯  ╰──────────────────────────────────╯
-```
+## What it is
 
-## Features
+`chronos` renders a **real-time sky** that changes with the actual local time
+and your location:
 
-- **Big live clock** — seven-segment HH:MM with ticking seconds, plus full date.
-- **Month calendar** — today highlighted, weekends accented, navigate freely.
-- **World clocks** — six zones with day/night glyphs (☀/☽), live from the OS tz database.
-- **Sky panel** — accurate sunrise/sunset (NOAA solar algorithm), daylight length,
-  a live sun-arc showing the sun's position across the day, and the current
-  moon phase with illumination bar.
-- **Upcoming events** — rolling countdown to the next holidays & solstices.
-- **All truecolor**, Tokyo-Night palette, rounded panels. Looks at home in any rice.
+- **Dawn, day, golden hour, dusk, night** — the whole sky gradient is driven by
+  the sun's true altitude (a NOAA solar-position calculation), so at 6am you get
+  a pink horizon and a low sun, at noon a deep blue dome, at dusk burning orange,
+  and at night a star-field with the moon.
+- **A real sun** that arcs across the sky by its computed azimuth & altitude,
+  with a soft glow and a bright disc.
+- **A real moon** at the correct phase — the lit/unlit limb is shaded from the
+  synodic phase angle, with a gentle halo.
+- **Drifting clouds** (animated fBm noise) lit by the sun's colour — white at
+  noon, salmon at sunset, slate at night.
+- **Twinkling stars** that fade in as the sun sinks below the horizon.
+- **A rolling hill silhouette** along the horizon.
+
+Everything is painted onto maya's half-block canvas (two RGB pixels per
+character cell), the same technique the maya `raymarch` / `fps` demos use — so
+this is genuine per-pixel graphics, not box-drawing.
+
+## Overlaid HUD
+
+- Big seven-segment **clock** + full date (`a` toggles big/compact).
+- Your **location** and the current **moon phase** name.
+- **Sunrise / sunset / daylight length** and the live **sun altitude**.
+- Toggleable floating **calendar** (`c`) and **world-clocks** (`w`) panels.
+
+## Time warp
+
+Want to *watch* a full day go by? Press `+` to fast-forward the sky (each press
+doubles the speed), `-` to run it backwards, `0` to snap back to live time.
+Dawn breaks, the sun climbs and sets, stars come out — in seconds.
 
 ## Build
 
@@ -53,46 +58,49 @@ cmake --build build -j$(nproc)
 ./build/chronos
 ```
 
-If you already cloned without `--recurse-submodules`:
+Already cloned without submodules? `git submodule update --init --recursive`.
 
-```bash
-git submodule update --init --recursive
-```
+Use a **truecolor terminal** (kitty, wezterm, alacritty, foot, recent
+xterm/iTerm2) for the full gradient — chronos emits 24-bit colour.
 
 ## Keys
 
-| Key       | Action            |
-|-----------|-------------------|
-| `h` / `←` | previous month    |
-| `l` / `→` | next month        |
-| `g` / `↑` | previous year     |
-| `G` / `↓` | next year         |
-| `t`       | jump to today     |
-| `a`       | toggle big clock  |
-| `q` / Esc | quit              |
+| Key        | Action                         |
+|------------|--------------------------------|
+| `a`        | big ⇄ compact clock            |
+| `c`        | calendar panel                 |
+| `w`        | world-clocks panel             |
+| `+` / `-`  | time warp faster / reverse     |
+| `0`        | back to live time              |
+| `h` / `l`  | prev / next month (in calendar)|
+| `q` / Esc  | quit                           |
 
-## Location (for accurate sun & moon)
+## Location
 
-`chronos` defaults to London. Export your coordinates to get correct
-sunrise/sunset and daylight for your location:
+`chronos` defaults to London. Export your coordinates (and an optional label)
+for an accurate sky, sunrise/sunset and moon:
 
 ```bash
 export CHRONOS_LAT=40.7128
 export CHRONOS_LON=-74.0060
+export CHRONOS_PLACE="New York"
 chronos
 ```
 
-Drop those in your shell rc and you're set.
+Put those in your shell rc and it's a permanent fixture of your rice.
 
-## Customizing your rice
+## How it works
 
-Everything is in `src/`:
+- `src/astro.hpp` — sun altitude/azimuth (continuous solar position), sunrise /
+  sunset (NOAA), moon phase (synodic age). No external deps.
+- `src/timeutil.hpp` — world-clock zones (from the OS tz database) and helpers.
+- `src/main.cpp` — the sky shader (`shade_pixel`), the HUD, the panels, and the
+  `canvas_run` animation loop. The sky model lives in `namespace sky`; recolour
+  the whole app by editing the keyframed `bands[]` palette there.
 
-- `src/main.cpp` — palette (`namespace pal`), layout, panels, the big-font clock.
-- `src/timeutil.hpp` — `default_zones()` (your world clocks) and the holiday list.
-- `src/astro.hpp` — sun/moon math.
-
-Change the world clocks by editing `default_zones()`; recolor by editing `pal`.
+The renderer is single-threaded by design: maya's SIMD cell-diff only ships the
+cells that actually changed each frame, so a slowly-evolving sky costs almost
+nothing on the wire.
 
 ## License
 

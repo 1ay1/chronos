@@ -9,6 +9,7 @@
 #include <ctime>
 #include <optional>
 #include <string>
+#include <algorithm>
 
 namespace chronos::astro {
 
@@ -95,6 +96,50 @@ inline SunTimes sun_times(int year, int mon, int day,
     if (dl < 0) dl += 24.0;
     out.daylight_h = dl;
     return out;
+}
+
+// ── Continuous solar position ─────────────────────────────────────────────
+// Returns the sun's altitude (degrees above horizon, negative below) and
+// azimuth (degrees, 0=N, 90=E, 180=S, 270=W) for any UTC instant. This is
+// what drives the animated sky colours and the sun's screen position —
+// far smoother than just rise/set times.
+
+struct SunPos {
+    double altitude = 0;   // degrees, +up
+    double azimuth  = 0;   // degrees from north, clockwise
+};
+
+inline SunPos sun_position(std::time_t utc, double lat, double lon) {
+    // Days since J2000.0
+    double d = (static_cast<double>(utc) - 946728000.0) / 86400.0; // 2000-01-01 12:00 UTC
+
+    double g = norm360(357.529 + 0.98560028 * d);          // mean anomaly
+    double q = norm360(280.459 + 0.98564736 * d);          // mean longitude
+    double L = norm360(q + 1.915 * std::sin(g * D2R)
+                         + 0.020 * std::sin(2 * g * D2R));  // ecliptic longitude
+    double e = 23.439 - 0.00000036 * d;                    // obliquity
+
+    double sinL = std::sin(L * D2R);
+    double RA = std::atan2(std::cos(e * D2R) * sinL, std::cos(L * D2R)) * R2D;
+    RA = norm360(RA);
+    double dec = std::asin(std::sin(e * D2R) * sinL) * R2D;
+
+    // Greenwich mean sidereal time → local sidereal time → hour angle
+    double GMST = norm360(280.46061837 + 360.98564736629 * d);
+    double LST  = norm360(GMST + lon);
+    double HA   = norm360(LST - RA);
+    double HAr  = HA * D2R, decr = dec * D2R, latr = lat * D2R;
+
+    double sinAlt = std::sin(latr) * std::sin(decr)
+                  + std::cos(latr) * std::cos(decr) * std::cos(HAr);
+    double alt = std::asin(std::clamp(sinAlt, -1.0, 1.0)) * R2D;
+
+    double cosAz = (std::sin(decr) - std::sin(latr) * sinAlt)
+                 / (std::cos(latr) * std::cos(std::asin(sinAlt)) + 1e-9);
+    double az = std::acos(std::clamp(cosAz, -1.0, 1.0)) * R2D;
+    if (std::sin(HAr) > 0) az = 360.0 - az;
+
+    return {alt, az};
 }
 
 struct MoonPhase {
