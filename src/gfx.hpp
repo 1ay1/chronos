@@ -127,6 +127,12 @@ public:
         cv_.set(cx, cy, U' ', text_style(bg, bg));
     }
 
+    // an arbitrary glyph with crisp fg ink over a bg (used by the vector font's
+    // quadrant block renderer). fg is the glyph colour, bg the backdrop.
+    void glyph_cell(int cx, int cy, char32_t glyph, Col fg, Col bg) {
+        cv_.set(cx, cy, glyph, text_style(fg, bg));
+    }
+
     // -- text -----------------------------------------------------------------
     // Draw text with explicit fg/bg per cell.
     void text(int cx, int cy, std::string_view s, Col fg, Col bg, bool bold = false) {

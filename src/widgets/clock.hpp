@@ -38,27 +38,23 @@ public:
             return;
         }
 
-        // scalable vector clock: choose em height from the rect.
-        float height_px = (size_ == 0) ? (r.h * 2 * 0.86f) : (r.h * 2 * 0.55f);
-        height_px = std::clamp(height_px, 10.f, 96.f);
+        // scalable crisp vector clock: em height in OCTANT rows (= 4× cell rows).
+        float em_q = (size_ == 0) ? (r.h * 4 * 0.72f) : (r.h * 4 * 0.46f);
+        em_q = std::clamp(em_q, 20.f, 200.f);
 
         std::string hhmm = std::format("{:02}:{:02}", c.lt.tm_hour, c.lt.tm_min);
-        float bx = r.x;
-        float by = r.y * 2 + 1;   // sub-pixel top
+        float bx = (float)r.x;
+        float by = (float)r.y;     // cell-space top
 
-        // soft drop shadow for legibility over bright sky
-        auto shadow_bg = [&](int cx, int cy) { return bg(cx, cy); };
-        font::draw_text(p, bx + 1.5f, by + 1.5f, height_px, hhmm,
-                        gfx::scale(Col{0,0,0}, 1.f), shadow_bg, 0.13f);
-        float endx = font::draw_text(p, bx, by, height_px, hhmm, accent, bg, 0.12f);
+        float endx = font::draw_text(p, bx, by, em_q, hhmm, accent, bg, 0.115f);
 
-        // seconds, small, trailing baseline-aligned
-        float secs_h = height_px * 0.34f;
-        float secs_y = by + height_px - secs_h;
-        font::draw_text(p, endx + height_px * 0.12f, secs_y, secs_h,
+        // seconds, smaller, vertically centred against the big digits.
+        float secs_q = em_q * 0.38f;
+        float secs_y = by + (em_q - secs_q) / 2.f / 4.f;   // (octant-rows → cell-rows)
+        font::draw_text(p, endx + 0.5f, secs_y, secs_q,
                         std::format("{:02}", c.lt.tm_sec), ink, bg, 0.14f);
 
-        int date_y = int((by + height_px) / 2.f) + 1;
+        int date_y = int(by + em_q / 4.f) + 1;
         date_line(p, x, date_y, c, WD, MON, ink, bg);
     }
 
