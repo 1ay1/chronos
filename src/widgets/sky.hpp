@@ -195,7 +195,7 @@ public:
                     // sky) — saves ~5 fBm calls/pixel over the bottom third.
                     if (band < 0.01f && cirrus_band0 < 0.01f) return col;
                     float day  = gfx::smoothstep(-6.f, 8.f, sun_alt);
-                    float wind = c.anim * 5.5f;   // horizontal drift of the air mass
+                    float wind = c.anim * 2.2f;   // horizontal drift of the air mass
 
                     // normalised cloud-space coords (decouple shape from term size)
                     float u = px * 0.030f, v = py * 0.075f;
