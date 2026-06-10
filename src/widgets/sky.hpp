@@ -147,6 +147,11 @@ public:
         auto [moon_x, moon_y] = place(maz, malt);
         float moon_frac = (float)c.moon.frac;
 
+        // aurora: only at high geographic latitude, on a clear-ish night. The
+        // strength ramps with |lat| beyond ~48° and fades out under heavy cloud.
+        float abslat = std::abs((float)c.lat);
+        float aurora = gfx::smoothstep(48.f, 62.f, abslat) * (1.f - vz.cloud * 0.8f);
+
         auto shade = [&](float px, float py) -> Col {
             float vv = 1.f - py / float(PH);
             if (py < horizon_y) {
@@ -205,6 +210,35 @@ public:
                 // drawing anything.
                 float star_show = gfx::smoothstep(-7.f, -13.f, sun_alt);
                 if (star_show > 0.05f && py < horizon_y * 0.96f) {
+                    // ── aurora borealis: undulating green/magenta curtains in
+                    //    the upper sky. Built from vertical "rays" whose base
+                    //    height waves with low-freq noise + time, so the whole
+                    //    sheet ripples and breathes. Colour shifts green at the
+                    //    bottom to magenta at the crest. High latitudes only.
+                    if (aurora > 0.01f) {
+                        float topband = gfx::smoothstep(horizon_y * 0.92f, 0.f, py);
+                        // two overlapping curtains drifting at different speeds
+                        for (int L = 0; L < 2; ++L) {
+                            float ph  = L * 17.3f;
+                            float spd = (L ? 0.10f : 0.16f);
+                            // wavy lower edge of the curtain (in pixels)
+                            float wave = gfx::fbm(px * 0.018f + c.anim * spd + ph, 0.7f + ph);
+                            float base = horizon_y * (0.34f + L * 0.10f) - wave * PH * 0.10f;
+                            // vertical falloff above the wavy base = the sheet
+                            float sheet = gfx::smoothstep(base, base - PH * 0.16f, py)
+                                        * gfx::smoothstep(base - PH * 0.42f, base - PH * 0.16f, py);
+                            // ray structure: bright vertical streaks across x
+                            float rays = 0.55f + 0.45f * gfx::fbm(px * 0.10f + c.anim * spd * 1.7f + ph, 3.f);
+                            float a = sheet * rays * topband * aurora * (L ? 0.7f : 1.0f);
+                            // green low, cyan/magenta toward the crest
+                            float h = gfx::smoothstep(base, base - PH * 0.30f, py);
+                            Col ac = gfx::mix(Col{0.10f,0.95f,0.45f},  // green
+                                              Col{0.55f,0.25f,0.95f},  // violet crest
+                                              h * (0.5f + 0.5f * (float)L));
+                            col = gfx::add(col, gfx::scale(ac, a * 0.5f * star_show));
+                        }
+                    }
+
                     // Milky-Way: a soft diagonal band of unresolved glow
                     float mwd = std::abs((py - horizon_y * 0.35f) - (px - PW * 0.5f) * 0.28f);
                     float mw = gfx::smoothstep(PH * 0.16f, 0.f, mwd);
@@ -379,6 +413,55 @@ public:
             Col horizon_col = sky_palette(sun_alt, 0.f);
             float day = gfx::smoothstep(-8.f, 6.f, sun_alt);   // 0 night .. 1 day
             float sun_dir = std::clamp((sun_x / PW - 0.5f) * 2.f, -1.f, 1.f);
+
+            // ── reflective lake ────────────────────────────────────────────
+            // The lowest slice of the scene is still water that mirrors the
+            // sky: the surface sits at `shore_y`, and a pixel below it samples
+            // the sky colour reflected across that line, with a horizontal
+            // ripple wobble + a wavering specular glint from the sun/moon. This
+            // is computed from the palette + light discs (not the full cloud
+            // shader) so it stays cheap while reading convincingly like a lake.
+            float shore_y = horizon_y + PH * 0.30f;
+            if (py >= shore_y) {
+                // depth 0 at the shoreline .. 1 at the very bottom
+                float depth = std::clamp((py - shore_y) / std::max(1.f, float(PH) - shore_y), 0.f, 1.f);
+                // ripple: a travelling wave perturbs which sky row we mirror,
+                // stronger toward the viewer (foreground) so near water is choppier.
+                float ripple = std::sin(py * 0.55f - c.anim * 1.6f) * (0.6f + 2.2f * depth)
+                             + gfx::fbm(px * 0.10f + c.anim * 0.3f, py * 0.20f) * 1.5f * depth;
+                float mir_y = std::clamp(2.f * shore_y - py + ripple, 0.f, shore_y - 1.f);
+                float mv = 1.f - mir_y / float(PH);
+                Col water = sky_palette(sun_alt, mv);
+
+                // reflected sun glint: a wavering bright column under the sun
+                if (sun_alt > -3.f) {
+                    float gx = std::abs(px - sun_x + std::sin(py * 0.8f - c.anim * 2.f) * 2.5f * depth);
+                    float glint = gfx::smoothstep(PW * 0.10f, 0.f, gx)
+                                * (0.35f + 0.65f * std::abs(std::sin(py * 0.9f - c.anim * 3.f)));
+                    Col sc = gfx::mix(Col{1.f,0.7f,0.4f}, Col{1.f,0.92f,0.7f},
+                                      gfx::smoothstep(0.f, 16.f, sun_alt));
+                    water = gfx::add(water, gfx::scale(sc, glint * (0.4f + 0.4f*day)));
+                }
+                // reflected moon glint at night
+                if (sun_alt < 4.f) {
+                    float gx = std::abs(px - moon_x + std::sin(py * 0.7f - c.anim * 1.6f) * 2.0f * depth);
+                    float mvis = gfx::smoothstep(2.f, -6.f, sun_alt);
+                    float glint = gfx::smoothstep(PW * 0.06f, 0.f, gx)
+                                * (0.3f + 0.7f * std::abs(std::sin(py * 0.8f - c.anim * 2.2f)));
+                    water = gfx::add(water, gfx::scale(Col{0.80f,0.85f,0.98f}, glint * 0.5f * mvis));
+                }
+                // tint deeper water toward a cool teal + darken with depth so
+                // the surface reads as a real body, not just a flipped sky.
+                Col deep = gfx::mix(Col{0.04f,0.10f,0.16f}, Col{0.02f,0.05f,0.10f}, day < 0.3f ? 1.f : 0.f);
+                water = gfx::mix(water, deep, 0.30f + 0.45f * depth);
+                // a crisp specular highlight band right at the shoreline edge
+                float edge = gfx::smoothstep(2.5f, 0.f, py - shore_y);
+                water = gfx::add(water, gfx::scale(horizon_col, edge * 0.25f));
+                // storm/flash also touch the water so it stays consistent
+                if (vz.storm > 0.01f) water = gfx::mix(water, gfx::scale(water,0.5f), vz.storm);
+                if (flash > 0.001f)   water = gfx::add(water, gfx::scale(Col{0.5f,0.57f,0.8f}, flash*0.7f));
+                return gfx::posterize(gfx::saturate(water, 1.25f), 8.f);
+            }
 
             // Three ridges: far (hazy, high) → near (saturated, low). Day greens
             // are vivid sunlit grass; night/twilight keep them deep. `depth` 0..1

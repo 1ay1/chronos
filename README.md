@@ -131,6 +131,16 @@ CHRONOS_WX_CODE=75 ./build/chronos                      # heavy snow
 CHRONOS_WX_CODE=45 ./build/chronos                      # fog
 ```
 
+### Reflections & aurora
+
+A still **lake** sits at the foot of the scene and mirrors the sky in real time
+— the gradient, a rippling specular glint from the sun (or moon at night), and
+whatever the weather is doing, all wobbling with travelling surface waves.
+
+When your auto-located latitude is far enough north (or south), clear nights get
+an **aurora**: undulating green-to-violet curtains drifting across the upper sky.
+It pays off the IP geolocation — chase the lights just by being somewhere cold.
+
 ## How it works
 
 Every section is a self-contained **graphical widget** that paints itself into a
