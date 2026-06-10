@@ -214,8 +214,8 @@ inline char32_t octant_glyph(int mask) {
 //  fg_top/fg_bot : ink at the top / bottom of the em-box (gradient).
 //  bg_fn(col,row) -> backdrop colour.  Returns advanced x in fractional cells.
 // ═════════════════════════════════════════════════════════════════════════════
-template <class BgFn>
-inline float draw_text_grad(gfx::Painter& p, float px, float py, float height_px,
+template <class P, class BgFn>
+inline float draw_text_grad(P& p, float px, float py, float height_px,
                             std::string_view s, Col fg_top, Col fg_bot,
                             BgFn&& bg_fn, float weight = 0.13f,
                             Col glow_col = Col{0,0,0}, float glow_px = 0.f) {
@@ -334,8 +334,8 @@ inline float draw_text_grad(gfx::Painter& p, float px, float py, float height_px
 }
 
 // flat-colour convenience wrapper (fg_top == fg_bot).
-template <class BgFn>
-inline float draw_text(gfx::Painter& p, float px, float py, float height_px,
+template <class P, class BgFn>
+inline float draw_text(P& p, float px, float py, float height_px,
                        std::string_view s, Col fg, BgFn&& bg_fn,
                        float weight = 0.13f) {
     return draw_text_grad(p, px, py, height_px, s, fg, fg,

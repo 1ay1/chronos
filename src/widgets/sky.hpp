@@ -341,30 +341,25 @@ public:
             return {acc.r * inv, acc.g * inv, acc.b * inv};
         };
 
-        // The sky shader is expensive (per-pixel fbm clouds, glow, stars). It
-        // also evolves slowly, so we only RE-SHADE ~6×/sec. But blitting the
-        // same cached grid until the next shade makes motion jump (the lag).
-        // Fix: keep the LAST two shaded keyframes and temporally INTERPOLATE
-        // between them every frame by the fractional progress past the current
-        // keyframe. The heavy shader stays at 6fps; the displayed frame slides
-        // continuously at the full 30fps — smooth motion at no extra shade cost.
+        // ── Efficient, smooth sky: amortized incremental shading ──────────
+        // The per-pixel shader (fbm clouds, glow, stars) is expensive, and the
+        // scene is POSTERIZED — only ~25 distinct colours, motion happens in
+        // discrete band steps. So two rules keep it buttery AND cheap:
+        //   1. Never shade the whole grid in one frame (that was the 15-25ms
+        //      hitch every 1/6s). Instead shade a SLICE of rows each frame and
+        //      advance a cursor, so every frame costs roughly the same small
+        //      amount and the picture refreshes continuously top-to-bottom.
+        //   2. Blit the cached (already-posterized) colour directly — NO
+        //      per-frame lerp + re-posterize. That churn re-emitted ~200
+        //      cells/frame of invisible band-flicker; here a cell only changes
+        //      on the wire when its posterized colour actually moved a band.
         const size_t need = size_t(r.w) * r.h;
         bool resized = cache_.size() != need * 2 || cw_ != r.w || ch_ != r.h;
-        // keyframe index advances ~6×/sec; sun altitude quantised to 0.05°.
-        constexpr float KF_HZ = 6.f;
-        long anim_q = (long)std::floor(c.anim * KF_HZ);
-        long sun_q  = (long)std::floor(sun_alt * 20.f);
-        bool new_kf = (anim_q != anim_q_ || sun_q != sun_q_);
         if (resized) {
             cache_.assign(need * 2, Col{});
-            cache_prev_.assign(need * 2, Col{});
             cw_ = r.w; ch_ = r.h;
-            anim_q_ = LONG_MIN;   // force a fresh shade below
-            new_kf = true;
-        }
-        if (new_kf) {
-            std::swap(cache_prev_, cache_);   // old current → prev
-            anim_q_ = anim_q; sun_q_ = sun_q;
+            shade_row_ = 0;
+            // full first shade so the screen isn't blank for a few frames
             for (int cy = 0; cy < r.h; ++cy)
                 for (int cx = 0; cx < r.w; ++cx) {
                     float xl = float(r.x + cx);
@@ -372,21 +367,35 @@ public:
                     cache_[i]     = sample_row(xl, cy * 2 + 0.5f);
                     cache_[i + 1] = sample_row(xl, cy * 2 + 1.5f);
                 }
-            if (resized)  // first shade has no valid prev — seed it equal
-                cache_prev_ = cache_;
+        } else {
+            // Refresh the whole grid every ~SWEEP_S seconds by shading
+            // `rows_per_frame` rows per frame. Short sweep = band edges update
+            // promptly (continuous-feeling motion) while no single frame shades
+            // more than a few rows (no hitch). Capped so wide terminals stay cheap.
+            constexpr float SWEEP_S = 0.2f;
+            int rows_per_frame = std::clamp(
+                (int)std::ceil(r.h / (SWEEP_S * 30.f)), 1, 8);
+            for (int n = 0; n < rows_per_frame; ++n) {
+                int cy = shade_row_;
+                for (int cx = 0; cx < r.w; ++cx) {
+                    float xl = float(r.x + cx);
+                    size_t i = (size_t(cy) * r.w + cx) * 2;
+                    cache_[i]     = sample_row(xl, cy * 2 + 0.5f);
+                    cache_[i + 1] = sample_row(xl, cy * 2 + 1.5f);
+                }
+                shade_row_ = (shade_row_ + 1) % r.h;
+            }
         }
-        // fractional time since the current keyframe began, 0..1 across one KF.
-        float frac = std::clamp((c.anim * KF_HZ) - float(anim_q_), 0.f, 1.f);
-        // Blit prev→cur interpolated. maya's cell diff drops cells identical to
-        // last frame, so the wire cost is only the cells that actually changed.
+        // Blit the cached posterized grid directly, every cell every frame.
+        // This is what RESTORES sky cells that foreground widgets (clock digits,
+        // cards) overpainted last frame and have since vacated — so a shadow-
+        // diff here would strand stale glyphs. The blit itself is cheap (just a
+        // style intern + grid store); maya's wire diff then drops the cells
+        // identical to last frame, so only genuinely-changed cells hit the wire.
         for (int cy = 0; cy < r.h; ++cy)
             for (int cx = 0; cx < r.w; ++cx) {
                 size_t i = (size_t(cy) * r.w + cx) * 2;
-                // interpolate between keyframes, then RE-POSTERIZE so the lerp
-                // doesn't smear the crisp flat bands back into a gradient.
-                Col top = gfx::posterize(gfx::mix(cache_prev_[i],   cache_[i],   frac), 8.f);
-                Col bot = gfx::posterize(gfx::mix(cache_prev_[i+1], cache_[i+1], frac), 8.f);
-                p.cell(r.x + cx, r.y + cy, top, bot);
+                p.cell(r.x + cx, r.y + cy, cache_[i], cache_[i + 1]);
             }
 
         // ── bird flock (daytime overlay) ───────────────────────────────────
@@ -421,10 +430,9 @@ public:
     }
 
 private:
-    std::vector<Col> cache_;        // current shaded keyframe
-    std::vector<Col> cache_prev_;   // previous keyframe (for temporal lerp)
+    std::vector<Col> cache_;   // shaded + posterized colours, 2 sub-pixels/cell
     int  cw_ = -1, ch_ = -1;
-    long anim_q_ = LONG_MIN, sun_q_ = LONG_MIN;
+    int  shade_row_ = 0;       // incremental-shade cursor (rows swept per frame)
 };
 
 // helper other widgets use to scrim text legibly over the sky

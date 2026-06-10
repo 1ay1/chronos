@@ -6,6 +6,8 @@
 #include "../font.hpp"
 #include "sky.hpp"
 #include <format>
+#include <vector>
+#include <climits>
 
 namespace chronos::ui {
 
@@ -29,7 +31,6 @@ public:
         bool day   = !night;
         int ph = r.h * 2;
         auto bg     = [&](int, int cy) { return sky_scrim(sun_alt, cy, ph); };
-        auto skybg  = [&](int, int cy) { return sky_bg(sun_alt, cy, ph); };
 
         int x = r.x, y = r.y;
         if (size_ == 2) {  // compact single line
@@ -48,39 +49,60 @@ public:
         float bx = (float)r.x;
         float by = (float)r.y;     // cell-space top
 
-        // Premium look: (1) tight dark outline for legibility on bright skies;
-        // (2) body as a vertical GRADIENT (bright cool-white top → accent
-        // bottom = backlit-glass sheen); (3) a TRUE soft glow integrated into
-        // the body pass — a smooth distance falloff halo, not a blocky outline.
-        // Daytime: the sky is BRIGHT, so a pale gradient body OR a bright halo
-        // both wash out (cream-over-blue barely brightens). The thing that reads
-        // on a bright sky is a SOLID near-black ink body with a tight dark
-        // contour — a dark silhouette. Night keeps the backlit-glass white→accent
-        // gradient with a soft accent glow.
         Col contour = day ? Col{0.0f, 0.0f, 0.0f} : Col{0.02f, 0.03f, 0.07f};
         Col glow    = night ? gfx::scale(accent, 0.7f) : Col{0.0f, 0.0f, 0.0f};
         Col top_ink = night ? Col{1.0f, 1.0f, 1.0f}    : Col{0.04f, 0.05f, 0.10f};
         Col bot_ink = night ? accent                   : Col{0.10f, 0.12f, 0.20f};
         float glow_px = night ? em_q * 0.18f : 0.f;    // halo only helps at night
-        font::draw_text(p, bx, by, em_q, hhmm, contour, skybg, 0.20f);
-        font::draw_text_grad(p, bx, by, em_q, hhmm, top_ink, bot_ink, skybg,
-                             0.135f, glow, glow_px);
-        // draw_text advances in sub-x units (2 per cell); convert to cells /2.
-        float endx = bx + font::measure_em(hhmm) * em_q / 2.f;
 
-        // seconds, smaller, sitting AFTER the minutes and baseline-aligned to
-        // the bottom of the big digits (superscript style).
-        float secs_q = em_q * 0.40f;
-        float secs_y = by + (em_q - secs_q) / 4.f;   // (octant-rows → cell-rows)
         std::string ss = std::format("{:02}", c.lt.tm_sec);
-        font::draw_text(p, endx + 1.0f, secs_y, secs_q, ss, contour, skybg, 0.22f);
-        font::draw_text_grad(p, endx + 1.0f, secs_y, secs_q, ss, top_ink, bot_ink, skybg, 0.135f);
+        float endx   = bx + font::measure_em(hhmm) * em_q / 2.f;
+        float secs_q = em_q * 0.40f;
+        float secs_y = by + (em_q - secs_q) / 4.f;
+
+        // The vector-font rasterizer (SDF coverage per sub-pixel) is the single
+        // most expensive thing in the app (~15ms at 200 cols), and it runs every
+        // frame. But the digits only change once a SECOND. So rasterize into a
+        // captured cell list and re-blit that each frame; re-rasterize only when
+        // the displayed time / size / palette / position actually changes.
+        long sig = (long)c.lt.tm_hour * 3600 + c.lt.tm_min * 60 + c.lt.tm_sec;
+        // fold in everything that affects the pixels (size, day/night, geometry)
+        long key = (sig * 31 + size_) * 31 + (night ? 1 : 0);
+        key = key * 131 + (long)std::lround(em_q) * 4099 + r.x * 17 + r.y;
+        if (key != clock_key_ || clock_cells_.empty()) {
+            clock_key_ = key;
+            clock_cells_.clear();
+            CaptureSink cap{p.cols(), p.rows(), &clock_cells_};
+            // backdrops are baked into the captured cells; sampled once here.
+            auto skybg = [&](int, int cy) { return sky_bg(sun_alt, cy, ph); };
+            font::draw_text(cap, bx, by, em_q, hhmm, contour, skybg, 0.20f);
+            font::draw_text_grad(cap, bx, by, em_q, hhmm, top_ink, bot_ink, skybg,
+                                 0.135f, glow, glow_px);
+            font::draw_text(cap, endx + 1.0f, secs_y, secs_q, ss, contour, skybg, 0.22f);
+            font::draw_text_grad(cap, endx + 1.0f, secs_y, secs_q, ss, top_ink, bot_ink,
+                                 skybg, 0.135f);
+        }
+        // replay the cached glyph cells onto the real canvas
+        for (const CapCell& cc : clock_cells_)
+            p.glyph_cell(cc.cx, cc.cy, cc.glyph, cc.fg, cc.bg);
 
         int date_y = int(by + em_q / 4.f) + 1;
         date_line(p, x, date_y, c, WD, MON, ink, bg);
     }
 
 private:
+    // a captured glyph cell + a sink that records draw_text* output instead of
+    // painting it, so the rasterization can be reused across frames.
+    struct CapCell { int cx, cy; char32_t glyph; Col fg, bg; };
+    struct CaptureSink {
+        int cols_, rows_;
+        std::vector<CapCell>* out;
+        int cols() const { return cols_; }
+        int rows() const { return rows_; }
+        void glyph_cell(int cx, int cy, char32_t g, Col fg, Col bg) {
+            out->push_back({cx, cy, g, fg, bg});
+        }
+    };
     template <class BgFn>
     void date_line(Painter& p, int x, int y, const Ctx& c,
                    const char* const* WD, const char* const* MON,
@@ -100,6 +122,8 @@ private:
         (void)bg;
     }
     int size_ = 0;   // 0 huge, 1 big, 2 compact
+    long clock_key_ = LONG_MIN;          // signature of the cached rasterization
+    std::vector<CapCell> clock_cells_;   // captured glyph cells, replayed/frame
 };
 
 } // namespace chronos::ui
