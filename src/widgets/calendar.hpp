@@ -312,13 +312,14 @@ private:
         p.panel(r.x, r.y, r.w, r.h, bg, th.panel_border);
         Rect in = r.inset(1);
         int x = in.x + 1, y = in.y;
+        int rx = in.right() - 1;       // right text edge for values
 
         // selected date headline
         int d = std::clamp(cursor, 1, dim);
         int dow = dow_monday(year, month, d);          // 0=Mon
         static const char* WDF[7] = {"Monday","Tuesday","Wednesday","Thursday",
                                      "Friday","Saturday","Sunday"};
-        p.text(x, y, "SELECTED", th.accent, bg, true);
+        section(p, x, in.right(), in.y, "SELECTED", th.accent, bg);
         p.text(x, y + 1, std::format("{}", WDF[dow]), th.text, bg, true);
         p.text(x, y + 2, std::format("{} {} {}", d, MON_FULL(month), year),
                th.text_dim, bg);
@@ -339,36 +340,66 @@ private:
                              0.15f, dglow, em * 0.16f);
         int yy = y + 4 + (int)(em / 4.f) + 1;
 
-        rule(p, in.x, yy, in.w, th.panel_border, bg); yy++;
-
-        // moon phase for the selected day
+        // The rail content is laid out in stacked sections. Rather than top-
+        // align everything (which strands a huge empty glass void at the foot,
+        // as in the old layout), we measure the natural content height and add
+        // a uniform breathing gap between sections so the body fills the rail.
+        int doy   = chronos::astro::day_of_year(year, month, d);
+        int week  = iso_week(year, month, d);
         std::time_t noon = timeutil::make_midnight(year, month, d) + 43200;
         auto mp = chronos::astro::moon_phase(noon);
-        p.text(x, yy, "MOON", th.cool, bg, true); yy++;
+        double tzoff = c.tz_offset;
+        auto st = chronos::astro::sun_times(year, month, d, c.lat, c.lon, tzoff);
+        auto evs = chronos::timeutil::upcoming_events(c.now);
+        int n_ev = std::min((int)evs.size(), 4);
+
+        // section row costs: MOON 3, SUN 4, GLANCE 4, YEAR 3, UPCOMING 1+n_ev
+        int content = 3 + 4 + 4 + 3 + (1 + n_ev);
+        int avail   = in.bottom() - yy;                // rows left below the day
+        int slack   = std::max(0, avail - content);
+        int gap     = std::clamp(slack / 5, 0, 3);     // spread across 5 gaps
+
+        // ── MOON ────────────────────────────────────────────────────────────
+        section(p, x, in.right(), yy, "MOON", th.cool, bg); yy++;
         p.text(x, yy, std::format("{}  {}", moon_symbol(mp.frac), mp.name),
                th.text, bg); yy++;
         int gw = std::max(5, in.w - 7);
         p.gauge(x, yy, gw, (float)mp.illum, th.cool, th.panel_border, bg);
         p.text(x + gw + 1, yy, std::format("{:.0f}%", mp.illum * 100),
-               th.text_dim, bg); yy += 2;
+               th.text_dim, bg); yy += 1 + gap;
 
-        rule(p, in.x, yy, in.w, th.panel_border, bg); yy++;
+        // ── SUN: rise / set / daylight for the selected day ──────────────────
+        section(p, x, in.right(), yy, "SUN", th.warm, bg); yy++;
+        if (st.valid) {
+            kv(p, x, rx, yy, "\u2191 Rise", clock_hm(st.sunrise_h), th.text_dim, th.text, bg); yy++;
+            kv(p, x, rx, yy, "\u2193 Set",  clock_hm(st.sunset_h),  th.text_dim, th.text, bg); yy++;
+            kv(p, x, rx, yy, "Daylight", std::format("{:.1f}h", st.daylight_h),
+               th.text_dim, th.warm, bg); yy += 1 + gap;
+        } else {
+            p.text(x, yy, st.always_up ? "Polar day" : "Polar night",
+                   th.text_dim, bg); yy += 3 + gap;
+        }
 
-        // week / day-of-year / season facts
-        int doy  = chronos::astro::day_of_year(year, month, d);
-        int week = iso_week(year, month, d);
-        p.text(x, yy, "AT A GLANCE", th.accent, bg, true); yy++;
-        p.text(x, yy, std::format("Day {} of {}", doy, year_len(year)), th.text_dim, bg); yy++;
-        p.text(x, yy, std::format("ISO week {:02}", week), th.text_dim, bg); yy++;
-        p.text(x, yy, std::format("{}  {}", season_mark(month, d), season(month, d)),
-               th.text_dim, bg); yy += 2;
+        // ── AT A GLANCE: week / day-of-year / season ─────────────────────────
+        section(p, x, in.right(), yy, "AT A GLANCE", th.accent, bg); yy++;
+        kv(p, x, rx, yy, "Day of year", std::format("{}/{}", doy, year_len(year)),
+           th.text_dim, th.text, bg); yy++;
+        kv(p, x, rx, yy, "ISO week", std::format("{:02}", week), th.text_dim, th.text, bg); yy++;
+        kv(p, x, rx, yy, season(month, d),
+           std::string(season_mark(month, d)), th.text_dim, th.cool, bg); yy += 1 + gap;
 
-        rule(p, in.x, yy, in.w, th.panel_border, bg); yy++;
+        // ── YEAR PROGRESS: a thin bar of how far through the year we are ──────
+        section(p, x, in.right(), yy, "YEAR", th.cool, bg); yy++;
+        float yprog = float(doy) / float(year_len(year));
+        int ygw = std::max(5, in.w - 7);
+        p.gauge(x, yy, ygw, yprog, th.warm, th.panel_border, bg);
+        p.text(x + ygw + 1, yy, std::format("{:.0f}%", yprog * 100),
+               th.text_dim, bg); yy += 1 + gap;
 
-        // upcoming events with countdowns
-        p.text(x, yy, "UPCOMING", th.accent, bg, true); yy++;
-        auto evs = chronos::timeutil::upcoming_events(c.now);
-        for (auto& e : evs) {
+        // ── UPCOMING events with countdowns ──────────────────────────────────
+        section(p, x, in.right(), yy, "UPCOMING", th.accent, bg); yy++;
+        for (int i = 0; i < n_ev; ++i) {
+            auto& e = evs[i];
             if (yy >= in.bottom()) break;
             std::string label = std::format("\u2022 {}", e.name);
             std::string cd = e.days == 0 ? "today" : std::format("{}d", e.days);
@@ -382,6 +413,34 @@ private:
             yy++;
         }
         (void)sun_alt;
+    }
+
+    // section header: ACCENT label with a leading tick + a hairline rule that
+    // runs from after the label to the panel's right edge. Reads as a proper
+    // titled divider instead of a bare bold word.
+    void section(Painter& p, int x, int right, int y, const char* label,
+                 Col accent, Col bg) {
+        p.text(x, y, "\u2503", accent, bg);                       // ┃ accent tick
+        p.text(x + 2, y, label, accent, bg, true);
+        int lx = x + 2 + (int)gfx::utf8_cols(label) + 1;
+        for (int cx = lx; cx < right - 1; ++cx)
+            p.text(cx, y, "\u2500", gfx::scale(accent, 0.30f), bg);
+    }
+
+    // a label : value row, value right-aligned to `rx`.
+    void kv(Painter& p, int x, int rx, int y, const std::string& key,
+            const std::string& val, Col kc, Col vc, Col bg) {
+        p.text(x, y, key, kc, bg);
+        int vx = rx - (int)gfx::utf8_cols(val) + 1;
+        p.text(vx, y, val, vc, bg, true);
+    }
+
+    // local solar hours (0-24) → "HH:MM".
+    static std::string clock_hm(double h) {
+        if (h < 0) h += 24; if (h >= 24) h -= 24;
+        int hh = (int)h; int mm = (int)std::lround((h - hh) * 60.0);
+        if (mm == 60) { mm = 0; hh = (hh + 1) % 24; }
+        return std::format("{:02}:{:02}", hh, mm);
     }
 
     // truncate a UTF-8 string to fit `cols` display columns, adding … if cut.
