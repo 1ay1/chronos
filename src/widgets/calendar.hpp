@@ -415,16 +415,43 @@ private:
         (void)sun_alt;
     }
 
-    // section header: ACCENT label with a leading tick + a hairline rule that
-    // runs from after the label to the panel's right edge. Reads as a proper
-    // titled divider instead of a bare bold word.
+    // section header: a filled accent CHIP holding a letter-spaced label, with
+    // a gradient hairline trailing to the panel edge that fades the accent into
+    // the glass. The chip + tracking make the titles pop as real section banners
+    // instead of a bare bold word on a faint line.
     void section(Painter& p, int x, int right, int y, const char* label,
                  Col accent, Col bg) {
-        p.text(x, y, "\u2503", accent, bg);                       // ┃ accent tick
-        p.text(x + 2, y, label, accent, bg, true);
-        int lx = x + 2 + (int)gfx::utf8_cols(label) + 1;
-        for (int cx = lx; cx < right - 1; ++cx)
-            p.text(cx, y, "\u2500", gfx::scale(accent, 0.30f), bg);
+        // letter-space the label for a premium, banner-like feel: "MOON" -> "M O O N"
+        std::string spaced;
+        for (const char* s = label; *s; ++s) {
+            if (s != label) spaced += ' ';
+            spaced += *s;
+        }
+        int lw = (int)gfx::utf8_cols(spaced);
+
+        // filled accent chip behind the label: dark ink on the bright accent,
+        // one cell of padding each side (mirrors the today-pill on the grid).
+        Col chip   = accent;
+        Col chip_d = gfx::scale(accent, 0.55f);          // shaded chip underside
+        Col ink    = gfx::scale(bg, 0.5f);               // near-black label ink
+        int cx0 = x, cx1 = x + lw + 2;                   // chip spans [cx0, cx1)
+        for (int cx = cx0; cx < cx1; ++cx)
+            p.cell(cx, y, chip, chip_d);                 // 2 sub-px = subtle sheen
+        p.text(x + 1, y, spaced, ink, chip, true);
+
+        // bright leading edge bar + a soft glow cell right of the chip
+        p.cell(cx1, y, gfx::scale(accent, 0.75f), gfx::scale(accent, 0.35f));
+
+        // gradient hairline from after the chip to the panel edge: starts at the
+        // accent and eases down into the background so it reads as a fade, not a
+        // flat dim line.
+        int hx0 = cx1 + 1, hx1 = right - 1;
+        int span = std::max(1, hx1 - hx0);
+        for (int cx = hx0; cx < hx1; ++cx) {
+            float t = float(cx - hx0) / float(span);     // 0 near chip .. 1 far
+            Col line = gfx::mix(gfx::scale(accent, 0.55f), bg, t * t);
+            p.text(cx, y, "\u2500", line, bg);
+        }
     }
 
     // a label : value row, value right-aligned to `rx`.
