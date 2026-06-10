@@ -16,6 +16,7 @@
 #include "astro.hpp"
 #include "timeutil.hpp"
 #include "weather.hpp"
+#include "geo.hpp"
 
 #include "widgets/sky.hpp"
 #include "widgets/clock.hpp"
@@ -42,9 +43,9 @@ class App {
 public:
     App() {
         theme_ = ui::tokyo_night();
-        if (const char* la = std::getenv("CHRONOS_LAT")) lat_ = std::atof(la);
-        if (const char* lo = std::getenv("CHRONOS_LON")) lon_ = std::atof(lo);
-        if (const char* pl = std::getenv("CHRONOS_PLACE")) place_ = pl;
+        if (const char* la = std::getenv("CHRONOS_LAT")) { lat_ = std::atof(la); have_lat_ = true; }
+        if (const char* lo = std::getenv("CHRONOS_LON")) { lon_ = std::atof(lo); have_lon_ = true; }
+        if (const char* pl = std::getenv("CHRONOS_PLACE")) { place_ = pl; have_place_ = true; }
         // optional: force a weather code to preview a scene (clear=0, overcast=3,
         // fog=45, rain=61/63/65, snow=71/73/75, thunderstorm=95/99).
         if (const char* wc = std::getenv("CHRONOS_WX_CODE")) wx_force_code_ = std::atoi(wc);
@@ -62,6 +63,11 @@ public:
 
         // kick off the first real weather fetch for our location
         wx_.configure(lat_, lon_);
+
+        // Auto-locate via public IP when the user hasn't pinned coordinates.
+        // The lookup runs off-thread; tick() applies the result when it lands
+        // and re-points the weather feed at the discovered location.
+        if (!have_lat_ || !have_lon_) geo_.start();
     }
 
     void set_pool(StylePool& pool) { pool_ = &pool; }
@@ -82,6 +88,14 @@ public:
     void tick(float dt) {
         anim_ += dt;
         time_warp_ += warp_rate_ * dt;
+        // apply an auto-located position the moment it arrives (once).
+        if (auto loc = geo_.take()) {
+            if (!have_lat_) lat_ = loc->lat;
+            if (!have_lon_) lon_ = loc->lon;
+            if (!have_place_ && !loc->place.empty()) place_ = loc->place;
+            wx_.configure(lat_, lon_);   // re-point the weather feed
+            sky_->invalidate();
+        }
         wx_.tick();   // refreshes live weather off-thread when due
     }
 
@@ -174,6 +188,7 @@ private:
     ui::Theme  theme_;
     double lat_ = 51.5074, lon_ = -0.1278;
     std::string place_ = "London";
+    bool   have_lat_ = false, have_lon_ = false, have_place_ = false;  // pinned via env
     double time_warp_ = 0, warp_rate_ = 0;
     float  anim_ = 0;
     bool   show_calendar_ = false, show_clocks_ = false;
@@ -191,6 +206,7 @@ private:
     std::unique_ptr<ui::StatusBarWidget>   statusbar_;
 
     chronos::weather::WeatherService       wx_;   // live weather (Open-Meteo)
+    chronos::geo::GeoService               geo_;  // auto-locate via public IP
 };
 
 int main() {

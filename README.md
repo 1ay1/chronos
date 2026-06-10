@@ -78,8 +78,15 @@ xterm/iTerm2) for the full gradient — chronos emits 24-bit colour.
 
 ## Location
 
-`chronos` defaults to London. Export your coordinates (and an optional label)
-for an accurate sky, sunrise/sunset and moon:
+`chronos` **finds your location automatically** on startup: it looks up the
+approximate latitude/longitude and city of your public IP (via
+[ip-api.com](https://ip-api.com), no key, off-thread) and points the sky,
+sunrise/sunset, moon, and weather at where you actually are. The lookup is
+best-effort — if you're offline or the request is blocked, it quietly falls back
+to London.
+
+To pin an exact spot (and skip the IP lookup), export your coordinates and an
+optional label:
 
 ```bash
 export CHRONOS_LAT=40.7128
@@ -88,14 +95,15 @@ export CHRONOS_PLACE="New York"
 chronos
 ```
 
-Put those in your shell rc and it's a permanent fixture of your rice.
+Any coordinate you set takes precedence over auto-location. Put those in your
+shell rc and it's a permanent fixture of your rice.
 
 ## Live weather
 
 The weather card shows **real current conditions** — temperature, feels-like,
 today's high/low, humidity, and wind — pulled from the
 [Open-Meteo](https://open-meteo.com) public API (no key, no signup) for your
-`CHRONOS_LAT`/`CHRONOS_LON`. Fetching happens on a background thread so the UI
+location. Fetching happens on a background thread so the UI
 never stalls; data refreshes every ~10 minutes. Until the first fetch lands (or
 if you're offline) the card shows a quiet “fetching…” / “offline” state and keeps
 the last good reading.
@@ -148,6 +156,7 @@ src/
   astro.hpp            sun position, sunrise/sunset, moon phase (no deps)
   timeutil.hpp         world-clock zones, tz offset
   weather.hpp          Open-Meteo fetch service (libcurl, background thread)
+  geo.hpp              auto-locate via public IP (ip-api.com, off-thread)
   main.cpp             App: owns widgets, builds Ctx, lays out, routes events
 ```
 
