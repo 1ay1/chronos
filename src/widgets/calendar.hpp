@@ -29,12 +29,14 @@ public:
 
     bool on_key(const maya::Event& ev) override {
         using namespace maya;
-        if (key(ev, 'l') || key(ev, SpecialKey::Right)) { step_month(+1); return true; }
-        if (key(ev, 'h') || key(ev, SpecialKey::Left))  { step_month(-1); return true; }
-        if (key(ev, 'L'))                               { step_year(+1);  return true; }
-        if (key(ev, 'H'))                               { step_year(-1);  return true; }
+        if (key(ev, 'l') || key(ev, SpecialKey::Right)) { step_cursor(+1); return true; }
+        if (key(ev, 'h') || key(ev, SpecialKey::Left))  { step_cursor(-1); return true; }
         if (key(ev, 'j') || key(ev, SpecialKey::Down))  { step_cursor(+7); return true; }
         if (key(ev, 'k') || key(ev, SpecialKey::Up))    { step_cursor(-7); return true; }
+        if (key(ev, 'n') || key(ev, 'L'))               { step_month(+1); return true; }
+        if (key(ev, 'p') || key(ev, 'H'))               { step_month(-1); return true; }
+        if (key(ev, '}') || key(ev, ']'))               { step_year(+1);  return true; }
+        if (key(ev, '{') || key(ev, '['))               { step_year(-1);  return true; }
         if (key(ev, 't')) { y_ = m_ = cur_ = 0; return true; }
         return false;
     }
@@ -81,7 +83,7 @@ public:
 
         // footer hint bar, centred
         std::string hint =
-            "h/l month  \u00b7  H/L year  \u00b7  j/k week  \u00b7  t today  \u00b7  c close";
+            "h/l day  \u00b7  j/k week  \u00b7  n/p month  \u00b7  [ ] year  \u00b7  t today  \u00b7  c close";
         int hx = r.x + std::max(0, (W - (int)gfx::utf8_cols(hint)) / 2);
         p.text(hx, r.y + H - 1, hint, th.text_dim, scrim_bg(p, sun_alt, H - 1));
     }
@@ -110,17 +112,17 @@ private:
         font::draw_text(p, yx, (float)g.y, em, ys, contour, skybg, 0.24f);
         font::draw_text(p, yx, (float)g.y, em, ys, th.accent, skybg, 0.15f);
 
-        // month name in the vector font too, top-left. Give it its own em
-        // (smaller than the year so the year stays the hero) and clamp so it
-        // never runs into the right-aligned year.
+        // month name as bold caps text, vertically centred in the band. (The
+        // vector font only defines digits/punct — letters have no strokes, so
+        // the month must be plain text, not draw_text.)
         std::string up;
         for (char ch : mon) up += (char)std::toupper((unsigned char)ch);
-        float mem = em * 0.62f;
-        float avail = (yx - 2) - g.x;                  // space left of the year
-        float mw = font::measure_em(up) * mem / 2.f;
-        if (mw > avail && avail > 0) mem *= avail / mw;
-        font::draw_text(p, (float)g.x, (float)g.y, mem, up, contour, skybg, 0.22f);
-        font::draw_text(p, (float)g.x, (float)g.y, mem, up, th.warn, skybg, 0.14f);
+        int my = g.y + std::max(0, (band - 1) / 2);
+        // a soft accent underline tying it to the year baseline
+        int ulen = (int)gfx::utf8_cols(up);
+        for (int i = 0; i < ulen + 2; ++i)
+            p.text(g.x + i, my + 1, "\u2500", gfx::scale(th.warm, 0.5f), skybg(0, my + 1));
+        p.text(g.x, my, up, th.warm, skybg(0, my), true);
 
         // accent rule under the band
         int ruley = g.y + band;
