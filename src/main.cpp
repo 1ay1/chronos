@@ -100,7 +100,7 @@ public:
         sky_->paint(p, full, c);
 
         // top HUD: clock left, location right
-        clock_->paint(p, {2, 1, W - 4, 8}, c);
+        clock_->paint(p, {2, 1, W - 4, 11}, c);
         location_->paint(p, {2, 1, W - 4, 2}, c);
 
         // bottom dashboard cards: sun arc + moon, side by side, always on
