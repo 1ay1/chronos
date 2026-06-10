@@ -40,6 +40,11 @@ class SkyWidget : public Widget {
 public:
     const char* name() const override { return "sky"; }
 
+    // Force a full reshade on the next paint. Called after any discrete input
+    // (warp change, jump-to-now, overlay toggle) so the result appears at once
+    // instead of trickling in over the amortized row-sweep.
+    void invalidate() { dirty_ = true; }
+
     void paint(Painter& p, const Rect& r, const Ctx& c) override {
         const int PW = r.w, PH = r.h * 2;
         const float horizon_y = PH * 0.62f;
@@ -375,7 +380,8 @@ public:
         //      on the wire when its posterized colour actually moved a band.
         const size_t need = size_t(r.w) * r.h;
         bool resized = cache_.size() != need * 2 || cw_ != r.w || ch_ != r.h;
-        if (resized) {
+        if (resized || dirty_) {
+            dirty_ = false;
             cache_.assign(need * 2, Col{});
             cw_ = r.w; ch_ = r.h;
             shade_row_ = 0;
@@ -392,9 +398,9 @@ public:
             // `rows_per_frame` rows per frame. Short sweep = band edges update
             // promptly (continuous-feeling motion) while no single frame shades
             // more than a few rows (no hitch). Capped so wide terminals stay cheap.
-            constexpr float SWEEP_S = 0.12f;
+            constexpr float SWEEP_S = 0.10f;
             int rows_per_frame = std::clamp(
-                (int)std::ceil(r.h / (SWEEP_S * 30.f)), 1, 10);
+                (int)std::ceil(r.h / (SWEEP_S * 60.f)), 1, 10);
             for (int n = 0; n < rows_per_frame; ++n) {
                 int cy = shade_row_;
                 for (int cx = 0; cx < r.w; ++cx) {
@@ -453,6 +459,7 @@ private:
     std::vector<Col> cache_;   // shaded + posterized colours, 2 sub-pixels/cell
     int  cw_ = -1, ch_ = -1;
     int  shade_row_ = 0;       // incremental-shade cursor (rows swept per frame)
+    bool dirty_ = false;       // full reshade requested (instant response to input)
 };
 
 // helper other widgets use to scrim text legibly over the sky

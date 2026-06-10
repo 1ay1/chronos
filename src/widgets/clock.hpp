@@ -65,25 +65,39 @@ public:
         // frame. But the digits only change once a SECOND. So rasterize into a
         // captured cell list and re-blit that each frame; re-rasterize only when
         // the displayed time / size / palette / position actually changes.
-        long sig = (long)c.lt.tm_hour * 3600 + c.lt.tm_min * 60 + c.lt.tm_sec;
-        // fold in everything that affects the pixels (size, day/night, geometry)
-        long key = (sig * 31 + size_) * 31 + (night ? 1 : 0);
-        key = key * 131 + (long)std::lround(em_q) * 4099 + r.x * 17 + r.y;
-        if (key != clock_key_ || clock_cells_.empty()) {
-            clock_key_ = key;
-            clock_cells_.clear();
-            CaptureSink cap{p.cols(), p.rows(), &clock_cells_};
-            // backdrops are baked into the captured cells; sampled once here.
+        //
+        // Two SEPARATE caches: the big HH:MM block changes only once a MINUTE,
+        // the small seconds block once a second. Splitting them means the
+        // per-second frame only re-rasters the two tiny seconds glyphs (cheap)
+        // instead of the whole expensive HH:MM block — keeps every frame well
+        // under the 60fps budget (no 1/sec stutter).
+        long geom = (long)size_ * 31 + (night ? 1 : 0);
+        geom = geom * 131 + (long)std::lround(em_q) * 4099 + r.x * 17 + r.y;
+        long sig_hm = ((long)c.lt.tm_hour * 60 + c.lt.tm_min);
+        long key_hm = geom * 100003 + sig_hm;
+        if (key_hm != hm_key_ || hm_cells_.empty()) {
+            hm_key_ = key_hm;
+            hm_cells_.clear();
+            CaptureSink cap{p.cols(), p.rows(), &hm_cells_};
             auto skybg = [&](int, int cy) { return sky_bg(sun_alt, cy, ph); };
             font::draw_text(cap, bx, by, em_q, hhmm, contour, skybg, 0.20f);
             font::draw_text_grad(cap, bx, by, em_q, hhmm, top_ink, bot_ink, skybg,
                                  0.135f, glow, glow_px);
+        }
+        long key_ss = geom * 100003 + c.lt.tm_sec + 1000;
+        if (key_ss != ss_key_ || ss_cells_.empty()) {
+            ss_key_ = key_ss;
+            ss_cells_.clear();
+            CaptureSink cap{p.cols(), p.rows(), &ss_cells_};
+            auto skybg = [&](int, int cy) { return sky_bg(sun_alt, cy, ph); };
             font::draw_text(cap, endx + 1.0f, secs_y, secs_q, ss, contour, skybg, 0.22f);
             font::draw_text_grad(cap, endx + 1.0f, secs_y, secs_q, ss, top_ink, bot_ink,
                                  skybg, 0.135f);
         }
         // replay the cached glyph cells onto the real canvas
-        for (const CapCell& cc : clock_cells_)
+        for (const CapCell& cc : hm_cells_)
+            p.glyph_cell(cc.cx, cc.cy, cc.glyph, cc.fg, cc.bg);
+        for (const CapCell& cc : ss_cells_)
             p.glyph_cell(cc.cx, cc.cy, cc.glyph, cc.fg, cc.bg);
 
         int date_y = int(by + em_q / 4.f) + 1;
@@ -122,8 +136,10 @@ private:
         (void)bg;
     }
     int size_ = 0;   // 0 huge, 1 big, 2 compact
-    long clock_key_ = LONG_MIN;          // signature of the cached rasterization
-    std::vector<CapCell> clock_cells_;   // captured glyph cells, replayed/frame
+    long hm_key_ = LONG_MIN;            // signature of the cached HH:MM raster (1/min)
+    long ss_key_ = LONG_MIN;            // signature of the cached seconds raster (1/sec)
+    std::vector<CapCell> hm_cells_;     // captured HH:MM glyph cells, replayed/frame
+    std::vector<CapCell> ss_cells_;     // captured seconds glyph cells, replayed/frame
 };
 
 } // namespace chronos::ui

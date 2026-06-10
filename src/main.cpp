@@ -58,14 +58,14 @@ public:
 
     bool on_event(const Event& ev) {
         if (key(ev, 'q') || key(ev, SpecialKey::Escape)) return false;
-        if (key(ev, 'c')) { show_calendar_ = !show_calendar_; show_clocks_ = false; return true; }
-        if (key(ev, 'w')) { show_clocks_ = !show_clocks_; show_calendar_ = false; return true; }
-        if (key(ev, '0')) { time_warp_ = 0; warp_rate_ = 0; return true; }
-        if (key(ev, '+') || key(ev, '=')) { warp_rate_ = warp_rate_ <= 0 ? 600 : warp_rate_ * 2; return true; }
-        if (key(ev, '-') || key(ev, '_')) { warp_rate_ = warp_rate_ >= 0 ? -600 : warp_rate_ * 2; return true; }
+        if (key(ev, 'c')) { show_calendar_ = !show_calendar_; show_clocks_ = false; sky_->invalidate(); return true; }
+        if (key(ev, 'w')) { show_clocks_ = !show_clocks_; show_calendar_ = false; sky_->invalidate(); return true; }
+        if (key(ev, '0')) { time_warp_ = 0; warp_rate_ = 0; sky_->invalidate(); return true; }
+        if (key(ev, '+') || key(ev, '=')) { warp_rate_ = warp_rate_ <= 0 ? 600 : warp_rate_ * 2; sky_->invalidate(); return true; }
+        if (key(ev, '-') || key(ev, '_')) { warp_rate_ = warp_rate_ >= 0 ? -600 : warp_rate_ * 2; sky_->invalidate(); return true; }
         // route to the active overlay first, then always-on widgets
-        if (show_calendar_ && calendar_->on_key(ev)) return true;
-        if (clock_->on_key(ev)) return true;
+        if (show_calendar_ && calendar_->on_key(ev)) { sky_->invalidate(); return true; }
+        if (clock_->on_key(ev)) { sky_->invalidate(); return true; }
         return true;
     }
 
@@ -155,7 +155,7 @@ int main() {
     auto last = Clock::now();
 
     (void)canvas_run(
-        CanvasConfig{.fps = 30, .mouse = false, .mode = Mode::Fullscreen,
+        CanvasConfig{.fps = 60, .mouse = false, .mode = Mode::Fullscreen,
                      .auto_clear = false, .title = "chronos"},
         [&](StylePool& pool, int, int) { app.set_pool(pool); },
         [&](const Event& ev) -> bool { return app.on_event(ev); },
