@@ -78,9 +78,9 @@ int main(){
     const int S=6;                          // upscale per sub-pixel
     const int W=COLS*2*S, H=ROWS*4*S;
     (void)PXW;(void)PXH;(void)IW;(void)IH;
-    std::vector<Col> img(W*H, Col{0.05f,0.06f,0.11f});  // sky-ish bg
+    std::vector<Col> img(W*H, Col{0.42f,0.62f,0.92f});  // bright DAY sky
 
-    Col sky{0.05f,0.06f,0.11f};
+    Col sky{0.42f,0.62f,0.92f};
     auto blit=[&](int cx,int cy,int mask,const float covs[8],Col fg,float a){
         for(int r=0;r<4;++r)for(int col=0;col<2;++col){
             bool lit = mask & (1<<(r*2+col));
@@ -98,11 +98,11 @@ int main(){
     };
 
     float em = 9.0f*4*0.72f;   // ~ rows*4*0.72
-    Col accent{0.78f,0.86f,1.0f};
-    Col contour{0.02f,0.03f,0.07f};
-    Col glow = mix(Col{0,0,0}, accent, 0.40f);
-    Col top_ink{1.0f,1.0f,1.0f};
-    Col bot_ink = accent;
+    Col accent{1.0f,0.99f,0.94f};
+    Col contour{0.0f,0.0f,0.0f};
+    Col glow = Col{0.0f,0.0f,0.0f};
+    Col top_ink{0.04f,0.05f,0.10f};
+    Col bot_ink{0.10f,0.12f,0.20f};
     // gradient body blit (lit) AND glow blit (mask==255, covs=alpha): when a
     // cell comes from the glow branch we just tint by its alpha; lit body
     // cells use the gradient.
@@ -121,7 +121,7 @@ int main(){
             }
         };
     };
-    float glow_px = em*0.18f;
+    float glow_px = 0.f;
     fp::draw(COLS,ROWS,1,1,em,"22:50",contour,0.20f,blit);
     fp::draw(COLS,ROWS,1,1,em,"22:50",top_ink,0.135f,blit_grad(1,em,top_ink,bot_ink),glow,glow_px);
 

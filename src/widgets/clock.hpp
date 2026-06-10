@@ -26,6 +26,7 @@ public:
         bool night = sun_alt < -6.f;
         Col ink    = night ? Col{0.92f,0.94f,1.0f} : Col{0.08f,0.10f,0.16f};
         Col accent = night ? Col{0.78f,0.86f,1.0f} : Col{1.0f,0.99f,0.94f};
+        bool day   = !night;
         int ph = r.h * 2;
         auto bg     = [&](int, int cy) { return sky_scrim(sun_alt, cy, ph); };
         auto skybg  = [&](int, int cy) { return sky_bg(sun_alt, cy, ph); };
@@ -51,11 +52,16 @@ public:
         // (2) body as a vertical GRADIENT (bright cool-white top → accent
         // bottom = backlit-glass sheen); (3) a TRUE soft glow integrated into
         // the body pass — a smooth distance falloff halo, not a blocky outline.
-        Col contour{0.02f, 0.03f, 0.07f};
-        Col glow    = night ? gfx::scale(accent, 0.7f) : gfx::scale(accent, 0.4f);
-        Col top_ink = night ? Col{1.0f, 1.0f, 1.0f} : Col{0.20f, 0.24f, 0.34f};
-        Col bot_ink = accent;
-        float glow_px = em_q * 0.18f;                 // halo radius in sub-pixels
+        // Daytime: the sky is BRIGHT, so a pale gradient body OR a bright halo
+        // both wash out (cream-over-blue barely brightens). The thing that reads
+        // on a bright sky is a SOLID near-black ink body with a tight dark
+        // contour — a dark silhouette. Night keeps the backlit-glass white→accent
+        // gradient with a soft accent glow.
+        Col contour = day ? Col{0.0f, 0.0f, 0.0f} : Col{0.02f, 0.03f, 0.07f};
+        Col glow    = night ? gfx::scale(accent, 0.7f) : Col{0.0f, 0.0f, 0.0f};
+        Col top_ink = night ? Col{1.0f, 1.0f, 1.0f}    : Col{0.04f, 0.05f, 0.10f};
+        Col bot_ink = night ? accent                   : Col{0.10f, 0.12f, 0.20f};
+        float glow_px = night ? em_q * 0.18f : 0.f;    // halo only helps at night
         font::draw_text(p, bx, by, em_q, hhmm, contour, skybg, 0.20f);
         font::draw_text_grad(p, bx, by, em_q, hhmm, top_ink, bot_ink, skybg,
                              0.135f, glow, glow_px);
