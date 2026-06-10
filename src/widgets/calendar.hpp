@@ -152,19 +152,21 @@ private:
         int span = g.bottom() - grid_top;
         if (span < rows) return;                      // too short to draw
 
-        // cap cell height so cells stay card-shaped; pad above/below and
-        // between rows with the leftover space (gutter).
-        int cell_h = std::clamp(span / rows, 3, 5);
-        int slack  = span - cell_h * rows;            // rows of leftover
-        int gut    = rows > 1 ? std::clamp(slack / (rows + 1), 0, 2) : 0;
-        int used   = cell_h * rows + gut * (rows - 1);
-        int top    = grid_top + std::max(0, (span - used) / 2);
+        // Fill the WHOLE span: cells take a flat base height, and the leftover
+        // rows are spread as a 1-row gutter between weeks (and the remainder
+        // padded onto the cells themselves) so the grid always reaches the
+        // bottom — no dead-zone, no stretched void.
+        int gut       = (span >= rows * 4 + (rows - 1)) ? 1 : 0;
+        int body      = span - gut * (rows - 1);      // rows available for cells
+        int cell_base = body / rows;
+        int extra     = body - cell_base * rows;      // give first `extra` rows +1
 
         int pm = month - 1, pmy = year; if (pm < 1) { pm = 12; pmy--; }
         int pdim = days_in_month(pmy, pm);
 
+        int cy0 = grid_top;
         for (int row = 0; row < rows; ++row) {
-            int cy0 = top + row * (cell_h + gut);
+            int cell_h = cell_base + (row < extra ? 1 : 0);
             for (int col = 0; col < 7; ++col) {
                 int idx = row * 7 + col;
                 int daynum; bool in_month; int cellM, cellYr;
@@ -186,6 +188,7 @@ private:
                                in_month && cellYr == ty && cellM == tm && daynum == td,
                                col >= 5);
             }
+            cy0 += cell_h + gut;
         }
     }
 
@@ -197,14 +200,13 @@ private:
                         int day, int year, int month, bool in_month,
                         bool is_cursor, bool is_today, bool weekend) {
         const Theme& th = c.theme;
-        float sun_alt = (float)c.sun.altitude;
-        Col base_bg = scrim_bg(p, sun_alt, y);
-
-        // card fill: in-month days sit a touch brighter than the backdrop so
-        // the grid reads as a panel of tiles; off-month days stay flush.
-        Col card = in_month ? gfx::mix(base_bg, th.text, 0.07f) : base_bg;
-        if (is_today)  card = gfx::mix(base_bg, th.accent, 0.18f);
-        if (is_cursor) card = gfx::mix(base_bg, th.accent, 0.22f);
+        (void)c;
+        // Flat tile colors — a constant glass, NOT the per-row sky scrim, so
+        // every cell reads with identical brightness top-to-bottom.
+        Col tile_bg{0.055f, 0.065f, 0.105f};          // dark blue-grey glass
+        Col card = in_month ? tile_bg : gfx::scale(tile_bg, 0.45f);
+        if (is_today)  card = gfx::mix(tile_bg, th.accent, 0.22f);
+        if (is_cursor) card = gfx::mix(tile_bg, th.accent, 0.28f);
         for (int cy = y; cy < y + h; ++cy)
             for (int cx = x; cx < x + w; ++cx)
                 p.text(cx, cy, " ", card, card);
