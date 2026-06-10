@@ -79,22 +79,65 @@ public:
         int dim  = days_in_month(year, month);
         int fdow = first_dow_monday(year, month);     // 0=Mon .. 6=Sun
 
-        // ── layout: grid panel (left ~70%) + side rail (right) ──────────────
+        // ── layout: responsive modes ──────────────────────────────────────
+        //   wide      : grid on the left, full vertical rail on the right.
+        //   portrait  : terminal is tall & narrow (phone, e.g. iSH on iPhone)
+        //               — too thin for a side rail, so dock a COMPACT rail along
+        //               the bottom under the grid instead of dropping it.
+        //   grid-only : short & narrow — no room for the rail; just the grid.
+        //   tiny      : BOTH dimensions small — hide the rail AND the footer
+        //               hint so every row goes to the grid.
+        bool tiny = (W < 30 && H < 18);
         int rail_w = std::clamp(W / 4, 22, 34);
         int gap    = 2;
-        Rect grid{r.x + 2, r.y + 1, W - rail_w - gap - 4, H - 2};
-        Rect rail{grid.right() + gap, r.y + 1, rail_w, H - 2};
+        bool show_rail   = !tiny && W >= 64;            // side-by-side vertical rail
+        // portrait: clearly taller than wide AND too narrow for a side rail,
+        // with enough height to spare a few rows at the foot.
+        int  bottom_h    = 0;
+        bool bottom_rail = false;
+        if (!tiny && !show_rail && H >= W && H >= 22) {
+            bottom_h = std::min(7, std::max(5, H / 5));
+            bottom_rail = true;
+        }
+        if (!show_rail) { rail_w = 0; gap = 0; }
+        // On phone-width terminals shave the side margins so the 7 columns get
+        // every cell they can; wide screens keep the roomier 2-col inset.
+        int margin  = (W < 44) ? 1 : 2;
+        int grid_w  = show_rail ? (W - rail_w - gap - 4) : (W - margin * 2);
+        // grid height stops above the bottom rail (and its 1-row separator)
+        // when one is docked, leaving room for it + the footer hint. In tiny
+        // mode there's no footer, so the grid reclaims that last row too.
+        int foot_h  = tiny ? 0 : 1;
+        int grid_h  = H - 1 - foot_h - (bottom_rail ? bottom_h + 1 : 0);
+        Rect grid{r.x + margin, r.y + 1, grid_w, grid_h};
 
         int header_bottom = paint_header(p, grid, c, MON_FULL(month), year);
         paint_grid(p, grid, c, header_bottom, year, month, dim, fdow, cursor,
                    today_y, today_m, today_d);
-        paint_rail(p, rail, c, year, month, cursor, dim);
+        if (show_rail) {
+            Rect rail{grid.right() + gap, r.y + 1, rail_w, H - 2};
+            paint_rail(p, rail, c, year, month, cursor, dim);
+        } else if (bottom_rail) {
+            Rect brail{r.x + margin, grid.bottom() + 1, W - margin * 2, bottom_h};
+            paint_bottom_rail(p, brail, c, year, month, cursor, dim);
+        }
 
-        // footer hint bar, centred
-        std::string hint =
-            "h/l day  \u00b7  j/k week  \u00b7  n/p month  \u00b7  [ ] year  \u00b7  t today  \u00b7  c close";
-        int hx = r.x + std::max(0, (W - (int)gfx::utf8_cols(hint)) / 2);
-        p.text(hx, r.y + H - 1, hint, th.text_dim, scrim_bg(p, sun_alt, H - 1));
+        // footer hint bar, centred. Hidden entirely in tiny mode so the grid
+        // keeps the row. Otherwise pick a hint that fits the available width
+        // (the full one is ~70 cols and overflows on a phone-width terminal).
+        if (!tiny) {
+            std::string hint;
+            if (W >= 72)
+                hint = "h/l day  \u00b7  j/k week  \u00b7  n/p month  \u00b7  [ ] year  \u00b7  t today  \u00b7  c close";
+            else if (W >= 44)
+                hint = "h/l day \u00b7 j/k week \u00b7 n/p month \u00b7 t today \u00b7 c close";
+            else if (W >= 30)
+                hint = "h/l \u00b7 j/k \u00b7 n/p \u00b7 t \u00b7 c close";
+            else
+                hint = "c close";
+            int hx = r.x + std::max(0, (W - (int)gfx::utf8_cols(hint)) / 2);
+            p.text(hx, r.y + H - 1, hint, th.text_dim, scrim_bg(p, sun_alt, H - 1));
+        }
     }
 
 private:
@@ -110,32 +153,46 @@ private:
         auto skybg = [&](int, int cy) { return scrim_bg(p, sun_alt, cy); };
 
         // header band height is fixed (responsive cells live below it). The big
-        // year is sized to that band so it never bleeds into the grid.
-        int band = std::clamp(g.h / 5, 4, 8);          // header rows
+        // year is sized to that band so it never bleeds into the grid. On a
+        // narrow (phone-width) grid the band shrinks so the month grid keeps
+        // most of the vertical space.
+        bool narrow = g.w < 36;
+        int band = narrow ? std::clamp(g.h / 7, 3, 5)
+                          : std::clamp(g.h / 5, 4, 8);          // header rows
         float em = band * 4 * 0.92f;                    // octant-rows for the year
 
+        // The big vector year is only worth drawing when there's room for it
+        // beside the month name; on phone widths it overlaps the title, so we
+        // fall back to a plain right-aligned year string instead.
         std::string ys = std::format("{}", year);
         float yw = font::measure_em(ys) * em / 2.f;
-        float yx = g.right() - yw - 1;
-        Col contour{0.02f, 0.03f, 0.07f};
-        Col glow    = gfx::scale(th.accent, 0.45f);
-        Col yr_top  = gfx::mix(th.accent, Col{1,1,1}, 0.55f);   // bright top
-        Col yr_bot  = th.accent;                                 // accent bottom
-        font::draw_text(p, yx, (float)g.y, em, ys, contour, skybg, 0.22f);
-        font::draw_text_grad(p, yx, (float)g.y, em, ys, yr_top, yr_bot, skybg,
-                             0.15f, glow, em * 0.16f);
+        bool big_year = !narrow && yw < g.w * 0.55f;
+        if (big_year) {
+            float yx = g.right() - yw - 1;
+            Col contour{0.02f, 0.03f, 0.07f};
+            Col glow    = gfx::scale(th.accent, 0.45f);
+            Col yr_top  = gfx::mix(th.accent, Col{1,1,1}, 0.55f);   // bright top
+            Col yr_bot  = th.accent;                                 // accent bottom
+            font::draw_text(p, yx, (float)g.y, em, ys, contour, skybg, 0.22f);
+            font::draw_text_grad(p, yx, (float)g.y, em, ys, yr_top, yr_bot, skybg,
+                                 0.15f, glow, em * 0.16f);
+        }
 
-        // month name as bold caps text, vertically centred in the band. (The
-        // vector font only defines digits/punct — letters have no strokes, so
-        // the month must be plain text, not draw_text.)
+        // month name: full caps when wide, 3-letter abbreviation when narrow.
+        // (The vector font only defines digits/punct — letters have no strokes,
+        // so the month must be plain text, not draw_text.)
         std::string up;
         for (char ch : mon) up += (char)std::toupper((unsigned char)ch);
+        if (narrow && up.size() > 3) up = up.substr(0, 3);
         int my = g.y + std::max(0, (band - 1) / 2);
+        // when the big year is suppressed, append a plain year so the date is
+        // never lost: "SEP 2026".
+        std::string title = big_year ? up : (up + " " + ys);
         // a soft accent underline tying it to the year baseline
-        int ulen = (int)gfx::utf8_cols(up);
-        for (int i = 0; i < ulen + 2; ++i)
+        int ulen = (int)gfx::utf8_cols(title);
+        for (int i = 0; i < ulen + 2 && g.x + i < g.right(); ++i)
             p.text(g.x + i, my + 1, "\u2500", gfx::scale(th.warm, 0.5f), skybg(0, my + 1));
-        p.text(g.x, my, up, th.warm, skybg(0, my), true);
+        p.text(g.x, my, title, th.warm, skybg(0, my), true);
 
         // accent rule under the band
         int ruley = g.y + band;
@@ -157,13 +214,23 @@ private:
 
         int cell_w = g.w / 7;
         int gx = g.x + (g.w - cell_w * 7) / 2;        // centre the 7 columns
+        int card_w = cell_w - 1;                       // visible card width (1-col inter-cell gutter)
 
-        // weekday header row
-        static const char* WD[7] = {"MON","TUE","WED","THU","FRI","SAT","SUN"};
+        // weekday header row. On wide cells use 3-letter labels; when cells are
+        // narrow (phone-width terminals like iSH) fall back to single letters
+        // so the header never overflows or collides with its neighbour. Each
+        // label is centred over the SAME card box the day cell uses below, so
+        // the weekday letters sit directly above their column of numbers.
+        static const char* WD3[7] = {"MON","TUE","WED","THU","FRI","SAT","SUN"};
+        static const char* WD1[7] = {"M","T","W","T","F","S","S"};
+        bool wide_wd = card_w >= 5;
+        const char** WD = wide_wd ? WD3 : WD1;
+        int wd_len = wide_wd ? 3 : 1;
         int wd_y = header_bottom;
         for (int i = 0; i < 7; ++i) {
             Col cc = (i >= 5) ? gfx::mix(th.cool, th.text_dim, 0.35f) : th.text_dim;
-            int x = gx + i * cell_w + (cell_w - 3) / 2;
+            int cardx = gx + i * cell_w;               // card left edge (matches paint_day_cell)
+            int x = cardx + std::max(0, (card_w - wd_len) / 2);
             p.text(x, wd_y, WD[i], cc, bg(x, wd_y), true);
         }
 
@@ -173,21 +240,25 @@ private:
         int span = g.bottom() - grid_top;
         if (span < rows) return;                      // too short to draw
 
-        // Fill the WHOLE span: cells take a flat base height, and the leftover
-        // rows are spread as a 1-row gutter between weeks (and the remainder
-        // padded onto the cells themselves) so the grid always reaches the
-        // bottom — no dead-zone, no stretched void.
-        int gut       = (span >= rows * 4 + (rows - 1)) ? 1 : 0;
-        int body      = span - gut * (rows - 1);      // rows available for cells
-        int cell_base = body / rows;
-        int extra     = body - cell_base * rows;      // give first `extra` rows +1
+        // Cap the cell height so a tall screen pads BETWEEN weeks rather than
+        // ballooning each card into a mostly-empty void (the day number sits at
+        // the top, so a 10-row-tall card just looks broken). We choose a cell
+        // height, then spread the leftover rows as gutters between weeks and
+        // vertically centre the whole block.
+        const int CELL_MAX = 5;                       // tallest a card should get
+        int cell_h = std::clamp(span / rows, 2, CELL_MAX);
+        int used   = cell_h * rows;
+        int free   = std::max(0, span - used);        // rows to distribute as gutters
+        // gutter between weeks (rows-1 gaps); cap so gaps never dwarf the cells.
+        int gut    = (rows > 1) ? std::min(2, free / (rows - 1)) : 0;
+        int block  = used + gut * (rows - 1);
+        int top_pad = std::max(0, (span - block) / 2);  // centre vertically
 
         int pm = month - 1, pmy = year; if (pm < 1) { pm = 12; pmy--; }
         int pdim = days_in_month(pmy, pm);
 
-        int cy0 = grid_top;
+        int cy0 = grid_top + top_pad;
         for (int row = 0; row < rows; ++row) {
-            int cell_h = cell_base + (row < extra ? 1 : 0);
             for (int col = 0; col < 7; ++col) {
                 int idx = row * 7 + col;
                 int daynum; bool in_month; int cellM, cellYr;
@@ -273,31 +344,40 @@ private:
         else                num_fg = th.text;
         if (is_cursor)      num_fg = Col{1,1,1};
 
-        // day number, top-left (inset 1 when the card has a border)
+        // day number: centred horizontally in the card so it sits directly
+        // under its weekday label, near the top of the card. Today gets a warm
+        // pill; otherwise a plain (bold in-month) number.
         std::string ds = std::format("{}", day);
-        int pad = boxed ? 1 : 0;
-        int ndx = x + 1 + pad, ndy = y + pad;
-        if (is_today) {
-            // warm-gold pill behind dark text — the one hot accent on the grid
-            int chip_w = (int)ds.size() + 2;
-            for (int cx = ndx; cx < ndx + chip_w && cx < x + w; ++cx)
+        int dlen = (int)ds.size();
+        int pad  = boxed ? 1 : 0;
+        int inner_x = x + pad, inner_w = w - 2 * pad;
+        int ndy = y + pad;
+        // pill needs dlen+2 cells; centre that block. Plain number centres dlen.
+        bool today_pill = is_today && (inner_w >= dlen + 2);
+        if (today_pill) {
+            int chip_w = dlen + 2;
+            int cx0 = inner_x + std::max(0, (inner_w - chip_w) / 2);
+            for (int cx = cx0; cx < cx0 + chip_w && cx < x + w - pad; ++cx)
                 p.text(cx, ndy, " ", th.warm, th.warm);
-            p.text(ndx + 1, ndy, ds, gfx::scale(th.panel_bg, 0.5f), th.warm, true);
+            p.text(cx0 + 1, ndy, ds, gfx::scale(th.panel_bg, 0.5f), th.warm, true);
         } else {
-            p.text(ndx, ndy, ds, num_fg, card, in_month || is_cursor);
+            int ndx = inner_x + std::max(0, (inner_w - dlen) / 2);
+            Col fg = is_today ? th.warm : num_fg;
+            p.text(ndx, ndy, ds, fg, card, in_month || is_cursor || is_today);
         }
 
-        // moon phase dot, bottom-right corner (so it never collides with the
-        // number or today pill, and the card body reads as occupied). Skip it
-        // when the card is too short or the cursor border owns that corner.
-        int min_w = (int)ds.size() + 3 + (boxed ? 2 : 0);
-        bool moon_room = h >= (boxed ? 4 : 2);
-        if (in_month && w >= min_w && moon_room) {
+        // moon phase dot: directly UNDER the number, centred in the card, so the
+        // number+dot read as one tidy stack instead of the dot floating off in a
+        // far corner. Skipped when the card is too short to host a second row
+        // (or the cursor border owns the bottom).
+        bool moon_room = (h - 2 * pad) >= 2;
+        if (in_month && moon_room) {
             std::time_t noon = timeutil::make_midnight(year, month, day) + 43200;
             auto mp = chronos::astro::moon_phase(noon);
             const char* sym = moon_symbol(mp.frac);
             Col mc = gfx::mix(gfx::scale(th.text_dim, 1.05f), th.cool, (float)mp.illum);
-            int mx = x + w - 2 - pad, my = y + h - 1 - pad;
+            int mx = inner_x + std::max(0, (inner_w - 1) / 2);
+            int my = ndy + 1;                          // one row below the number
             p.text(mx, my, sym, mc, card);
         }
     }
@@ -415,33 +495,116 @@ private:
         (void)sun_alt;
     }
 
+    // ── compact bottom rail (portrait / phone layout) ──────────────────────
+    // A short horizontal panel docked under the grid when the terminal is tall
+    // and narrow. It packs the most useful facts about the selected day into a
+    // few rows: a headline (weekday + date), then a row of stat chips (moon,
+    // sunrise/sunset, ISO week) and the next upcoming event. Designed to read
+    // well from ~28 cols up.
+    void paint_bottom_rail(Painter& p, const Rect& r, const Ctx& c,
+                           int year, int month, int cursor, int dim) {
+        const Theme& th = c.theme;
+        Col bg = gfx::mix(th.panel_bg, Col{0.06f, 0.07f, 0.12f}, 0.6f);
+        p.panel(r.x, r.y, r.w, r.h, bg, th.panel_border);
+        Rect in = r.inset(1);
+        int x = in.x + 1, rx = in.right() - 1;
+        int y = in.y;
+
+        int d = std::clamp(cursor, 1, dim);
+        int dow = dow_monday(year, month, d);
+        static const char* WDF[7] = {"Monday","Tuesday","Wednesday","Thursday",
+                                     "Friday","Saturday","Sunday"};
+
+        std::time_t noon = timeutil::make_midnight(year, month, d) + 43200;
+        auto mp = chronos::astro::moon_phase(noon);
+        auto st = chronos::astro::sun_times(year, month, d, c.lat, c.lon, c.tz_offset);
+        int  week = iso_week(year, month, d);
+        int  doy  = chronos::astro::day_of_year(year, month, d);
+
+        // headline: "Mon · 9 June 2026" left, season glyph right.
+        std::string head = std::format("{} \u00b7 {} {} {}",
+            WDF[dow], d, MON_FULL(month), year);
+        head = clip_cols(head, in.w - 3);
+        p.text(x, y, head, th.text, bg, true);
+        p.text(rx, y, season_mark(month, d), th.cool, bg);
+        // accent hairline under the headline
+        for (int cx = in.x; cx < in.right(); ++cx)
+            p.text(cx, y + 1, "\u2500", gfx::scale(th.panel_border, 0.9f), bg);
+        y += 2;
+        if (y >= in.bottom()) return;
+
+        // stats line: moon phase + illumination, then rise/set, then ISO week.
+        // Lay them as space-separated chips; clip to width.
+        std::string moon = std::format("{} {:.0f}%", moon_symbol(mp.frac), mp.illum * 100);
+        std::string sun  = st.valid
+            ? std::format("\u2191{} \u2193{}", clock_hm(st.sunrise_h), clock_hm(st.sunset_h))
+            : std::string(st.always_up ? "polar day" : "polar night");
+        // moon on the left, sun rise/set right-aligned on the same row
+        p.text(x, y, moon, th.cool, bg, true);
+        int sx = rx - (int)gfx::utf8_cols(sun) + 1;
+        if (sx > x + (int)gfx::utf8_cols(moon) + 1)
+            p.text(sx, y, sun, th.warm, bg);
+        y++;
+        if (y >= in.bottom()) return;
+
+        // week / day-of-year on the left; next event right-aligned.
+        std::string wk = std::format("wk {:02} \u00b7 d{}", week, doy);
+        p.text(x, y, wk, th.text_dim, bg);
+        auto evs = chronos::timeutil::upcoming_events(c.now);
+        if (!evs.empty()) {
+            auto& e = evs.front();
+            std::string cd = e.days == 0 ? "today" : std::format("{}d", e.days);
+            std::string ev = std::format("\u2022 {} {}", clip_cols(e.name,
+                                 std::max(3, in.w - (int)wk.size()
+                                              - (int)cd.size() - 6)), cd);
+            int ex = rx - (int)gfx::utf8_cols(ev) + 1;
+            if (ex > x + (int)gfx::utf8_cols(wk) + 1) {
+                Col ec = e.days == 0 ? th.good : th.text;
+                p.text(ex, y, ev, ec, bg);
+            }
+        }
+    }
+
     // section header: a filled accent CHIP holding a letter-spaced label, with
     // a gradient hairline trailing to the panel edge that fades the accent into
     // the glass. The chip + tracking make the titles pop as real section banners
     // instead of a bare bold word on a faint line.
     void section(Painter& p, int x, int right, int y, const char* label,
                  Col accent, Col bg) {
-        // letter-space the label for a premium, banner-like feel: "MOON" -> "M O O N"
+        // The chip must fit inside [x, right). Available label width leaves room
+        // for the two padding cells, the glow cell, and at least one hairline
+        // cell. Letter-space the label for a premium banner feel ONLY if the
+        // spaced form fits; otherwise fall back to the un-spaced label, then
+        // clip with an ellipsis. This keeps narrow rails (phone-width) from
+        // overflowing the panel border.
+        int avail = (right - 1) - x - 3;            // cells available for the label glyphs
+        if (avail < 1) avail = 1;
+
+        std::string plain = label;
         std::string spaced;
         for (const char* s = label; *s; ++s) {
             if (s != label) spaced += ' ';
             spaced += *s;
         }
-        int lw = (int)gfx::utf8_cols(spaced);
+        std::string lbl;
+        if ((int)gfx::utf8_cols(spaced) <= avail)      lbl = spaced;     // roomy: tracked
+        else if ((int)gfx::utf8_cols(plain) <= avail)  lbl = plain;      // tight: un-spaced
+        else                                           lbl = clip_cols(plain, avail);
+        int lw = (int)gfx::utf8_cols(lbl);
 
         // filled accent chip behind the label. The chip is a SOLID, uniform
         // bright fill (both sub-pixels the same colour) and the label is pure
-        // near-black ink — a two-tone chip or a tinted ink muddies the small
-        // glyph strokes and kills legibility. One cell of padding each side.
+        // near-black ink. One cell of padding each side.
         Col chip = accent;
         Col ink  = {0.04f, 0.04f, 0.06f};                // pure near-black label
-        int cx0 = x, cx1 = x + lw + 2;                   // chip spans [cx0, cx1)
+        int cx0 = x, cx1 = std::min(right, x + lw + 2);  // chip spans [cx0, cx1)
         for (int cx = cx0; cx < cx1; ++cx)
             p.text(cx, y, " ", ink, chip);              // solid bright chip fill
-        p.text(x + 1, y, spaced, ink, chip, true);
+        p.text(x + 1, y, lbl, ink, chip, true);
 
         // a soft glow cell right of the chip for a little dimensional pop
-        p.text(cx1, y, " ", ink, gfx::scale(accent, 0.45f));
+        if (cx1 < right)
+            p.text(cx1, y, " ", ink, gfx::scale(accent, 0.45f));
 
         // gradient hairline from after the chip to the panel edge: starts at the
         // accent and eases down into the background so it reads as a fade, not a
