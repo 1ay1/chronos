@@ -100,8 +100,8 @@ private:
 
         // header band height is fixed (responsive cells live below it). The big
         // year is sized to that band so it never bleeds into the grid.
-        int band = std::clamp(g.h / 6, 3, 6);          // header rows
-        float em = band * 4 * 0.82f;                    // octant-rows for the year
+        int band = std::clamp(g.h / 5, 4, 8);          // header rows
+        float em = band * 4 * 0.92f;                    // octant-rows for the year
 
         std::string ys = std::format("{}", year);
         float yw = font::measure_em(ys) * em / 2.f;
@@ -110,11 +110,16 @@ private:
         font::draw_text(p, yx, (float)g.y, em, ys, contour, skybg, 0.24f);
         font::draw_text(p, yx, (float)g.y, em, ys, th.accent, skybg, 0.15f);
 
-        // month name, bold caps, left, vertically centred in the band
+        // month name in the vector font too, left, sharing the year baseline.
+        // shrink it if it would run into the right-aligned year.
         std::string up;
         for (char ch : mon) up += (char)std::toupper((unsigned char)ch);
-        int my = g.y + band / 2;
-        p.text(g.x, my, up, th.warn, skybg(0, my), true);
+        float mem = em;
+        float avail = (yx - 1) - g.x;                  // space left of the year
+        float mw = font::measure_em(up) * mem / 2.f;
+        if (mw > avail && mw > 0) mem *= avail / mw;
+        font::draw_text(p, (float)g.x, (float)g.y, mem, up, contour, skybg, 0.22f);
+        font::draw_text(p, (float)g.x, (float)g.y, mem, up, th.warn, skybg, 0.14f);
 
         // accent rule under the band
         int ruley = g.y + band;
