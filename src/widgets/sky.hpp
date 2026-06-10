@@ -170,33 +170,85 @@ public:
                         }
                     }
                 }
-                // clouds: two volumetric layers, lit from the sun side
+                // clouds: domain-warped volumetric layers advected by wind.
+                // Two parallax decks give depth: high thin cirrus streaking
+                // fast, low fat cumulus rolling slow. Real cumulus is curdled,
+                // not smooth fBm — so the sample coords are WARPED by a second
+                // noise field (billowing cauliflower structure), and clouds
+                // ADVECT horizontally (wind) rather than just shimmering in xy.
                 {
                     float band = gfx::smoothstep(horizon_y, horizon_y * 0.20f, py);
-                    float day = gfx::smoothstep(-6.f, 8.f, sun_alt);
-                    // density field (low + high octave drift at different speeds)
-                    float d0 = gfx::fbm(px * 0.030f + c.anim * 0.05f, py * 0.075f + 12.3f);
-                    float d1 = gfx::fbm(px * 0.075f - c.anim * 0.08f, py * 0.150f + 40.0f);
-                    float dens = gfx::smoothstep(0.52f, 0.80f, d0 * 0.65f + d1 * 0.35f) * band;
-                    if (dens > 0.01f) {
-                        // self-shadow: sample density a step toward the sun; if it's
-                        // denser there, this cloud pixel is in shadow (darker).
+                    float cirrus_band0 = gfx::smoothstep(horizon_y * 0.62f, 0.f, py);
+                    // skip all cloud noise where neither deck can show (lower
+                    // sky) — saves ~5 fBm calls/pixel over the bottom third.
+                    if (band < 0.01f && cirrus_band0 < 0.01f) return col;
+                    float day  = gfx::smoothstep(-6.f, 8.f, sun_alt);
+                    float wind = c.anim * 2.0f;   // horizontal drift of the air mass
+
+                    // normalised cloud-space coords (decouple shape from term size)
+                    float u = px * 0.030f, v = py * 0.075f;
+
+                    // ── domain warp: offset the lookup by a low-freq flow field.
+                    // This bends the noise into billows instead of round blobs.
+                    float wx = gfx::fbm(u * 0.5f - wind * 0.010f, v * 0.5f + 3.1f);
+                    float wy = gfx::fbm(u * 0.5f + 5.7f, v * 0.5f - wind * 0.008f);
+                    float warp = 1.6f;
+
+                    // ── low cumulus deck: fat, slow, billowing ────────────────
+                    float cu = gfx::fbm(u + (wx - 0.5f) * warp - wind * 0.018f,
+                                        v + (wy - 0.5f) * warp + 12.3f);
+                    // sharpen tops: cauliflower bias makes crests bulge upward
+                    cu = cu * 0.7f + gfx::fbm(u * 2.1f - wind * 0.026f,
+                                              v * 2.1f + 7.0f) * 0.3f;
+                    float cumulus = gfx::smoothstep(0.50f, 0.74f, cu) * band;
+
+                    // ── high cirrus deck: thin, fast, stretched horizontally ──
+                    float ci = gfx::fbm(u * 0.6f - wind * 0.075f,
+                                        v * 2.4f + 40.0f);   // y-stretched = streaky
+                    float cirrus = gfx::smoothstep(0.58f, 0.80f, ci)
+                                 * cirrus_band0 * 0.55f;
+
+                    // composite (cumulus dominates where present)
+                    float dens = std::max(cumulus, cirrus * 0.8f);
+                    if (dens > 0.008f) {
+                        // self-shadow: sample density a step toward the sun; if
+                        // it's denser there, this pixel sits in the cloud's shade.
                         float sdx = (sun_x - px), sdy = (sun_y - py);
                         float sl = 1.f / (std::hypot(sdx, sdy) + 1e-3f);
-                        float ahead = gfx::fbm((px + sdx * sl * 6.f) * 0.030f + c.anim * 0.05f,
-                                               (py + sdy * sl * 6.f) * 0.075f + 12.3f);
-                        float lit = std::clamp(1.0f - (ahead - d0) * 2.2f, 0.25f, 1.f);
-                        Col lo = gfx::mix(Col{0.06f,0.07f,0.13f}, Col{0.30f,0.30f,0.40f}, day);
-                        Col hi = gfx::mix(Col{0.55f,0.40f,0.42f}, Col{1.0f,0.99f,0.98f},
+                        float ahead = gfx::fbm(u + (wx - 0.5f) * warp - wind * 0.018f
+                                                 + sdx * sl * 0.18f,
+                                               v + (wy - 0.5f) * warp + 12.3f
+                                                 + sdy * sl * 0.18f);
+                        float lit = std::clamp(1.0f - (ahead - cu) * 2.4f, 0.22f, 1.f);
+                        // ambient occlusion: cloud bases (high density core) darker
+                        float ao = 1.f - 0.25f * gfx::smoothstep(0.6f, 0.95f, cumulus);
+                        lit *= ao;
+
+                        Col lo = gfx::mix(Col{0.05f,0.06f,0.12f},
+                                          Col{0.34f,0.34f,0.42f}, day);
+                        Col hi = gfx::mix(Col{0.55f,0.40f,0.42f},
+                                          Col{1.0f,0.99f,0.98f},
                                           gfx::smoothstep(-6.f, 4.f, sun_alt));
                         Col cc = gfx::mix(lo, hi, lit);
-                        // warm rim where clouds catch low sun
-                        if (sun_alt > -4.f && sun_alt < 14.f) {
-                            float rim = gfx::smoothstep(0.55f, 0.62f, dens) *
-                                        (1.f - gfx::smoothstep(0.62f, 0.72f, dens));
-                            cc = gfx::add(cc, gfx::scale(Col{1.0f,0.55f,0.30f}, rim * 0.6f));
+
+                        // warm/gold rim where the cloud edge catches a low sun
+                        if (sun_alt > -4.f && sun_alt < 16.f) {
+                            float edge = gfx::smoothstep(0.50f, 0.60f, cu) *
+                                         (1.f - gfx::smoothstep(0.60f, 0.72f, cu));
+                            // brightest on the side facing the sun
+                            float facing = gfx::smoothstep(0.f, 1.f,
+                                            0.5f + 0.5f * ((sun_x - px) / PW) * 2.f);
+                            Col gold = gfx::mix(Col{1.0f,0.45f,0.22f},
+                                                Col{1.0f,0.80f,0.45f},
+                                                gfx::smoothstep(0.f,12.f,sun_alt));
+                            cc = gfx::add(cc, gfx::scale(gold,
+                                          edge * (0.35f + 0.45f * facing)));
                         }
-                        col = gfx::mix(col, cc, std::min(dens * 1.05f, 0.96f));
+                        // translucent fringe: thin cloud edges let sky bleed
+                        // through, so opacity ramps with density (no hard cutout).
+                        float opacity = std::min(dens * 1.15f, 0.97f);
+                        opacity *= opacity * (3.f - 2.f * opacity);   // ease
+                        col = gfx::mix(col, cc, opacity);
                     }
                 }
                 return col;
@@ -267,8 +319,10 @@ public:
         // horizontal samples, so curved/diagonal features (sun limb, hills,
         // clouds, stars) get smooth anti-aliasing instead of blocky steps.
         // Vertical resolution is the native 2 sub-pixels/cell; horizontal is
-        // supersampled SSx×.
-        constexpr int SSx = 2;
+        // supersampled SSx×. On very wide terminals the per-pixel shader cost
+        // (fBm clouds × every sample) dominates, so we drop to 1× there — the
+        // AA loss on already-soft clouds/hills is negligible.
+        const int SSx = (r.w > 160) ? 1 : 2;
         auto sample_row = [&](float cx_left, float sub_y) -> Col {
             Col acc{0,0,0};
             for (int s = 0; s < SSx; ++s) {
@@ -289,8 +343,10 @@ public:
         // at 30fps while the heavy shading runs ~8fps.
         const size_t need = size_t(r.w) * r.h;
         bool stale = cache_.size() != need * 2 || cw_ != r.w || ch_ != r.h;
-        // animation clock quantised to ~1/3 s; sun altitude quantised to 0.05°.
-        long anim_q = (long)std::floor(c.anim * 3.f);
+        // animation clock quantised to ~1/6 s (smooth cloud drift); sun altitude
+        // quantised to 0.05°. The shader is gated by these so heavy per-pixel
+        // work runs ~6fps while the cheap blit re-asserts at the full 30fps.
+        long anim_q = (long)std::floor(c.anim * 6.f);
         long sun_q  = (long)std::floor(sun_alt * 20.f);
         if (anim_q != anim_q_ || sun_q != sun_q_) stale = true;
         if (stale) {
