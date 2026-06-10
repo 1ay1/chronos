@@ -266,18 +266,21 @@ public:
             float day = gfx::smoothstep(-8.f, 6.f, sun_alt);   // 0 night .. 1 day
             float sun_dir = std::clamp((sun_x / PW - 0.5f) * 2.f, -1.f, 1.f);
 
-            // Three ridges: far (hazy, high) → near (saturated, low).
-            struct Ridge { float base; float amp; float freq; float phase; Col lo; Col hi; };
+            // Three ridges: far (hazy, high) → near (saturated, low). Day greens
+            // are vivid sunlit grass; night/twilight keep them deep. `depth` 0..1
+            // (far→near) drives saturation + how much haze washes the ridge.
+            struct Ridge { float base; float amp; float freq; float phase;
+                           Col lo; Col hi; float depth; };
             const Ridge ridges[] = {
-                // far blue-grey ridge, blends with haze
+                // far rolling hills, hazed toward the horizon sky
                 { horizon_y + PH * 0.020f, 2.5f, 0.018f, 0.4f,
-                  {0.10f,0.13f,0.18f}, {0.28f,0.34f,0.42f} },
-                // mid green-grey slope
+                  {0.16f,0.26f,0.22f}, {0.34f,0.50f,0.40f}, 0.0f },
+                // mid green slope, lusher
                 { horizon_y + PH * 0.075f, 4.0f, 0.030f, 2.1f,
-                  {0.05f,0.09f,0.07f}, {0.16f,0.30f,0.18f} },
-                // near foreground, darkest & most saturated
+                  {0.10f,0.22f,0.12f}, {0.26f,0.48f,0.22f}, 0.55f },
+                // near foreground meadow: brightest, most saturated grass
                 { horizon_y + PH * 0.170f, 6.0f, 0.045f, 4.7f,
-                  {0.03f,0.06f,0.04f}, {0.10f,0.22f,0.12f} },
+                  {0.07f,0.18f,0.08f}, {0.24f,0.52f,0.18f}, 1.0f },
             };
 
             Col col = horizon_col;            // start from the sky we sit under
@@ -288,24 +291,40 @@ public:
                             + rg.amp * 0.5f * std::sin(px * rg.freq * 2.3f + rg.phase * 1.7f);
                 if (py < crest) continue;     // above this ridge's silhouette
                 drawn = true;
-                // shading: brighter on the slope facing the sun, fades with depth.
-                float slope = std::cos(px * rg.freq + rg.phase);  // -1..1 ridge facing
-                float facing = 0.5f + 0.5f * slope * sun_dir;
-                float lo_t = std::clamp((py - crest) / (PH * 0.10f), 0.f, 1.f);
+                // base vertical shade within the ridge band (lit crest → dark base)
+                float lo_t = std::clamp((py - crest) / (PH * 0.12f), 0.f, 1.f);
                 Col terr = gfx::mix(rg.hi, rg.lo, lo_t);
-                // sunlit warmth on facing slopes during the day
-                terr = gfx::mix(terr, gfx::add(terr, Col{0.18f,0.14f,0.05f}),
-                                facing * day * 0.7f);
-                // atmospheric haze: distant (high crest) ridges wash toward sky
-                float haze = gfx::smoothstep(horizon_y + PH * 0.18f,
-                                             horizon_y, crest);
-                terr = gfx::mix(terr, horizon_col, haze * (0.35f + 0.35f * day));
+
+                // directional sun lighting: slopes facing the sun brighten, away
+                // darken — gives the hills real form instead of flat fills.
+                float slope = std::cos(px * rg.freq + rg.phase);   // -1..1 facing
+                float facing = slope * sun_dir;                    // -1 away .. +1 toward
+                terr = gfx::mix(terr, gfx::add(terr, Col{0.16f,0.18f,0.06f}),
+                                std::max(0.f, facing) * day * 0.55f);   // sunlit warm-green
+                terr = gfx::scale(terr, 1.f - std::max(0.f, -facing) * day * 0.30f); // shaded
+
+                // ground texture: a multi-scale fbm breakup so large flats get
+                // visible grain/dapple instead of one solid posterized block.
+                float tex = gfx::fbm(px * 0.18f, (py - crest) * 0.22f + rg.phase) * 0.7f
+                          + gfx::fbm(px * 0.55f, (py - crest) * 0.6f + rg.phase) * 0.3f;
+                terr = gfx::scale(terr, 0.82f + 0.40f * tex);
+
+                // atmospheric haze: only the DISTANT ridge washes toward the
+                // sky; near hills stay crisp and saturated (big change — the old
+                // code hazed every ridge during day = flat grey-green smear).
+                float dist_haze = (1.f - rg.depth);                // 1 far .. 0 near
+                float band_haze = gfx::smoothstep(horizon_y + PH * 0.10f, horizon_y, crest);
+                float haze = dist_haze * band_haze * (0.30f + 0.30f * day);
+                terr = gfx::mix(terr, horizon_col, haze);
                 col = terr;
             }
             if (!drawn) {
-                // a thin lit rim right at the horizon line before the first ridge
-                float rim = gfx::smoothstep(horizon_y + PH * 0.03f, horizon_y, py);
-                col = gfx::mix(horizon_col, gfx::scale(horizon_col, 0.6f), rim);
+                // The thin strip between the horizon line and the first ridge.
+                // Make it a distinct distant-land band (haze-green) rather than
+                // a flat wash of sky colour, so the horizon reads as a clean edge.
+                float t = gfx::smoothstep(horizon_y, horizon_y + PH * 0.04f, py);
+                Col far_land = gfx::mix(horizon_col, Col{0.30f, 0.42f, 0.40f}, 0.55f);
+                col = gfx::mix(horizon_col, far_land, t);
             }
             // warm horizon spill: the lit sky bleeds onto the land near the sun
             if (sun_alt > -4.f) {
@@ -316,9 +335,10 @@ public:
                                     gfx::smoothstep(0.f, 18.f, sun_alt));
                 col = gfx::add(col, gfx::scale(warm, spill * near_h * 0.28f * day));
             }
-            // base vignette: darken the very bottom so the dashboard cards read
-            float foot = gfx::smoothstep(PH * 0.86f, float(PH), py);
-            col = gfx::scale(col, 1.f - foot * 0.45f);
+            // base vignette: gently darken the very bottom so the dashboard
+            // cards read, without crushing the foreground meadow to flat black.
+            float foot = gfx::smoothstep(PH * 0.90f, float(PH), py);
+            col = gfx::scale(col, 1.f - foot * 0.30f);
             return gfx::posterize(gfx::saturate(col, 1.35f), 7.f);
         };
 
