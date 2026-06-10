@@ -110,14 +110,15 @@ private:
         font::draw_text(p, yx, (float)g.y, em, ys, contour, skybg, 0.24f);
         font::draw_text(p, yx, (float)g.y, em, ys, th.accent, skybg, 0.15f);
 
-        // month name in the vector font too, left, sharing the year baseline.
-        // shrink it if it would run into the right-aligned year.
+        // month name in the vector font too, top-left. Give it its own em
+        // (smaller than the year so the year stays the hero) and clamp so it
+        // never runs into the right-aligned year.
         std::string up;
         for (char ch : mon) up += (char)std::toupper((unsigned char)ch);
-        float mem = em;
-        float avail = (yx - 1) - g.x;                  // space left of the year
+        float mem = em * 0.62f;
+        float avail = (yx - 2) - g.x;                  // space left of the year
         float mw = font::measure_em(up) * mem / 2.f;
-        if (mw > avail && mw > 0) mem *= avail / mw;
+        if (mw > avail && avail > 0) mem *= avail / mw;
         font::draw_text(p, (float)g.x, (float)g.y, mem, up, contour, skybg, 0.22f);
         font::draw_text(p, (float)g.x, (float)g.y, mem, up, th.warn, skybg, 0.14f);
 
