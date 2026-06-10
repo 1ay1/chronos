@@ -107,13 +107,66 @@ public:
                 }
                 return col;
             }
-            // ground
-            float hill = horizon_y + 3.f * std::sin(px * 0.07f) + 2.f * std::sin(px * 0.17f + 1.3f);
-            Col base = sky_palette(sun_alt, 0.f);
-            Col ground = gfx::mix(gfx::scale(base, 0.18f), Col{0.02f,0.03f,0.04f}, 0.6f);
-            if (py < hill) return gfx::mix(base, ground, 0.4f);
-            float depth = (py - hill) / (PH - hill + 1.f);
-            return gfx::scale(ground, 1.f - depth * 0.5f);
+            // ground — layered rolling hills with atmospheric depth.
+            // Sky colour at the horizon, used to tint distant ridges (haze).
+            Col horizon_col = sky_palette(sun_alt, 0.f);
+            float day = gfx::smoothstep(-8.f, 6.f, sun_alt);   // 0 night .. 1 day
+            float sun_dir = std::clamp((sun_x / PW - 0.5f) * 2.f, -1.f, 1.f);
+
+            // Three ridges: far (hazy, high) → near (saturated, low).
+            struct Ridge { float base; float amp; float freq; float phase; Col lo; Col hi; };
+            const Ridge ridges[] = {
+                // far blue-grey ridge, blends with haze
+                { horizon_y + PH * 0.020f, 2.5f, 0.018f, 0.4f,
+                  {0.10f,0.13f,0.18f}, {0.28f,0.34f,0.42f} },
+                // mid green-grey slope
+                { horizon_y + PH * 0.075f, 4.0f, 0.030f, 2.1f,
+                  {0.05f,0.09f,0.07f}, {0.16f,0.30f,0.18f} },
+                // near foreground, darkest & most saturated
+                { horizon_y + PH * 0.170f, 6.0f, 0.045f, 4.7f,
+                  {0.03f,0.06f,0.04f}, {0.10f,0.22f,0.12f} },
+            };
+
+            Col col = horizon_col;            // start from the sky we sit under
+            bool drawn = false;
+            for (const Ridge& rg : ridges) {
+                float crest = rg.base
+                            + rg.amp * std::sin(px * rg.freq + rg.phase)
+                            + rg.amp * 0.5f * std::sin(px * rg.freq * 2.3f + rg.phase * 1.7f);
+                if (py < crest) continue;     // above this ridge's silhouette
+                drawn = true;
+                // shading: brighter on the slope facing the sun, fades with depth.
+                float slope = std::cos(px * rg.freq + rg.phase);  // -1..1 ridge facing
+                float facing = 0.5f + 0.5f * slope * sun_dir;
+                float lo_t = std::clamp((py - crest) / (PH * 0.10f), 0.f, 1.f);
+                Col terr = gfx::mix(rg.hi, rg.lo, lo_t);
+                // sunlit warmth on facing slopes during the day
+                terr = gfx::mix(terr, gfx::add(terr, Col{0.18f,0.14f,0.05f}),
+                                facing * day * 0.7f);
+                // atmospheric haze: distant (high crest) ridges wash toward sky
+                float haze = gfx::smoothstep(horizon_y + PH * 0.18f,
+                                             horizon_y, crest);
+                terr = gfx::mix(terr, horizon_col, haze * (0.35f + 0.35f * day));
+                col = terr;
+            }
+            if (!drawn) {
+                // a thin lit rim right at the horizon line before the first ridge
+                float rim = gfx::smoothstep(horizon_y + PH * 0.03f, horizon_y, py);
+                col = gfx::mix(horizon_col, gfx::scale(horizon_col, 0.6f), rim);
+            }
+            // warm horizon spill: the lit sky bleeds onto the land near the sun
+            if (sun_alt > -4.f) {
+                float spill = gfx::smoothstep(PW * 0.55f, 0.f,
+                                              std::abs(px - sun_x));
+                float near_h = gfx::smoothstep(horizon_y + PH * 0.10f, horizon_y, py);
+                Col warm = gfx::mix(Col{1.0f,0.65f,0.35f}, Col{1.0f,0.92f,0.7f},
+                                    gfx::smoothstep(0.f, 18.f, sun_alt));
+                col = gfx::add(col, gfx::scale(warm, spill * near_h * 0.28f * day));
+            }
+            // base vignette: darken the very bottom so the dashboard cards read
+            float foot = gfx::smoothstep(PH * 0.86f, float(PH), py);
+            col = gfx::scale(col, 1.f - foot * 0.45f);
+            return col;
         };
 
         for (int cy = 0; cy < r.h; ++cy)
