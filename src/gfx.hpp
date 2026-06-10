@@ -31,6 +31,25 @@ inline Col hex(uint32_t h) {
 }
 inline float luma(Col c) { return 0.299f * c.r + 0.587f * c.g + 0.114f * c.b; }
 
+// Posterize: snap each channel to one of `steps` discrete levels. Flattens a
+// smooth gradient into crisp flat bands — the blocky, hard-edged look that
+// reads cleanly (think Minecraft / pixel art) instead of mushy interpolation.
+inline Col posterize(Col c, float steps) {
+    auto q = [steps](float v) {
+        return std::round(std::clamp(v, 0.f, 1.f) * (steps - 1.f)) / (steps - 1.f);
+    };
+    return {q(c.r), q(c.g), q(c.b)};
+}
+
+// Saturate: push colour away from its grey luma by `s` (1 = unchanged, >1 more
+// vivid). Pixel-art / Minecraft palettes are punchy, not desaturated.
+inline Col saturate(Col c, float s) {
+    float l = luma(c);
+    return {std::clamp(l + (c.r - l) * s, 0.f, 1.f),
+            std::clamp(l + (c.g - l) * s, 0.f, 1.f),
+            std::clamp(l + (c.b - l) * s, 0.f, 1.f)};
+}
+
 inline float smoothstep(float e0, float e1, float x) {
     float t = std::clamp((x - e0) / (e1 - e0 + 1e-9f), 0.f, 1.f);
     return t * t * (3.f - 2.f * t);

@@ -200,13 +200,13 @@ public:
                     // sharpen tops: cauliflower bias makes crests bulge upward
                     cu = cu * 0.7f + gfx::fbm(u * 2.1f - wind * 0.026f,
                                               v * 2.1f + 7.0f) * 0.3f;
-                    float cumulus = gfx::smoothstep(0.50f, 0.74f, cu) * band;
+                    float cumulus = gfx::smoothstep(0.54f, 0.60f, cu) * band;
 
                     // ── high cirrus deck: thin, fast, stretched horizontally ──
                     float ci = gfx::fbm(u * 0.6f - wind * 0.075f,
                                         v * 2.4f + 40.0f);   // y-stretched = streaky
-                    float cirrus = gfx::smoothstep(0.58f, 0.80f, ci)
-                                 * cirrus_band0 * 0.55f;
+                    float cirrus = gfx::smoothstep(0.62f, 0.70f, ci)
+                                 * cirrus_band0 * 0.6f;
 
                     // composite (cumulus dominates where present)
                     float dens = std::max(cumulus, cirrus * 0.8f);
@@ -244,14 +244,14 @@ public:
                             cc = gfx::add(cc, gfx::scale(gold,
                                           edge * (0.35f + 0.45f * facing)));
                         }
-                        // translucent fringe: thin cloud edges let sky bleed
-                        // through, so opacity ramps with density (no hard cutout).
-                        float opacity = std::min(dens * 1.15f, 0.97f);
-                        opacity *= opacity * (3.f - 2.f * opacity);   // ease
+                        // crisp cloud: edges snap to solid (no translucent
+                        // fade), so clouds read as defined white shapes against
+                        // the flat sky — a thin 1-step soft fringe avoids jaggies.
+                        float opacity = gfx::smoothstep(0.04f, 0.30f, dens);
                         col = gfx::mix(col, cc, opacity);
                     }
                 }
-                return col;
+                return gfx::posterize(gfx::saturate(col, 1.25f), 8.f);
             }
             // ground — layered rolling hills with atmospheric depth.
             // Sky colour at the horizon, used to tint distant ridges (haze).
@@ -312,7 +312,7 @@ public:
             // base vignette: darken the very bottom so the dashboard cards read
             float foot = gfx::smoothstep(PH * 0.86f, float(PH), py);
             col = gfx::scale(col, 1.f - foot * 0.45f);
-            return col;
+            return gfx::posterize(gfx::saturate(col, 1.35f), 7.f);
         };
 
         // High-res render: each emitted sub-pixel is the average of several
@@ -375,8 +375,10 @@ public:
         for (int cy = 0; cy < r.h; ++cy)
             for (int cx = 0; cx < r.w; ++cx) {
                 size_t i = (size_t(cy) * r.w + cx) * 2;
-                Col top = gfx::mix(cache_prev_[i],     cache_[i],     frac);
-                Col bot = gfx::mix(cache_prev_[i + 1], cache_[i + 1], frac);
+                // interpolate between keyframes, then RE-POSTERIZE so the lerp
+                // doesn't smear the crisp flat bands back into a gradient.
+                Col top = gfx::posterize(gfx::mix(cache_prev_[i],   cache_[i],   frac), 8.f);
+                Col bot = gfx::posterize(gfx::mix(cache_prev_[i+1], cache_[i+1], frac), 8.f);
                 p.cell(r.x + cx, r.y + cy, top, bot);
             }
 
