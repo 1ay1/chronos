@@ -81,6 +81,20 @@ public:
                     float limb = 1.f - 0.35f * gfx::smoothstep(0.f, R, ds);
                     Col core = gfx::mix(Col{1,0.97f,0.86f}, Col{1.0f,0.93f,0.72f}, 1.f - limb);
                     col = gfx::mix(col, gfx::scale(core, limb + 0.2f), disc);
+
+                    // crepuscular rays: angular shafts of light streaming out
+                    // from the disc. The angle to the sun keys a slowly-rotating
+                    // band of noise so the shafts shimmer and drift; they fade
+                    // with distance and are strongest at low (golden) sun.
+                    {
+                        float ang = std::atan2(py - sun_y, px - sun_x);
+                        float beams = gfx::fbm(ang * 2.4f + c.anim * 0.05f, ds * 0.012f);
+                        float shaft = gfx::smoothstep(0.45f, 0.85f, beams);
+                        float reach = std::pow(gfx::smoothstep(PW * 0.6f, R * 2.f, ds), 1.3f);
+                        float low   = gfx::smoothstep(18.f, 0.f, sun_alt);  // golden bias
+                        col = gfx::add(col, gfx::scale(sc,
+                                       shaft * reach * (0.10f + 0.22f * low)));
+                    }
                 }
                 // moon
                 if (night || sun_alt < 6.f) {
@@ -119,6 +133,41 @@ public:
                         float pt = gfx::smoothstep(0.9f + bright * 0.6f, 0.f, dpt);
                         col = gfx::add(col, gfx::scale(scol,
                                        pt * (0.4f + bright) * tw * star_vis));
+                    }
+
+                    // shooting stars: every ~6s a meteor crosses the sky. The
+                    // epoch index seeds a random entry point + slope; within the
+                    // epoch a 0..1 progress sweeps the head along the streak and
+                    // a short bright tail trails behind it, fading out.
+                    {
+                        float T = c.anim / 6.0f;
+                        float epoch = std::floor(T);
+                        float prog  = T - epoch;                       // 0..1 in epoch
+                        float seed  = gfx::hash2(epoch * 12.9f, 7.1f);
+                        if (seed > 0.35f && prog < 0.5f) {             // ~65% of epochs fire
+                            float life = prog / 0.5f;                  // 0..1 streak life
+                            float sx0 = (0.1f + 0.8f * gfx::hash2(epoch, 3.7f)) * PW;
+                            float sy0 = (0.05f + 0.35f * gfx::hash2(epoch, 9.2f)) * horizon_y;
+                            float dir = (gfx::hash2(epoch, 1.1f) - 0.5f);
+                            float hx  = sx0 + life * PW * 0.5f;        // head moves right-down
+                            float hy  = sy0 + life * PW * (0.18f + dir * 0.2f);
+                            // distance to the streak segment (head back along travel dir)
+                            float tvx = PW * 0.5f, tvy = PW * (0.18f + dir * 0.2f);
+                            float tl  = std::hypot(tvx, tvy) + 1e-3f;
+                            float ux = tvx / tl, uy = tvy / tl;
+                            float rx = px - hx, ry = py - hy;
+                            float along = rx * ux + ry * uy;           // <=0 behind head
+                            float perp  = std::abs(rx * uy - ry * ux);
+                            float tail  = 9.0f;
+                            if (along <= 0.5f && along > -tail && perp < 1.4f) {
+                                float head = gfx::smoothstep(2.0f, 0.f, std::hypot(rx, ry));
+                                float body = gfx::smoothstep(tail, 0.f, -along) *
+                                             gfx::smoothstep(1.4f, 0.f, perp);
+                                float fade = (1.f - life) * star_vis;
+                                col = gfx::add(col, gfx::scale(
+                                    Col{0.95f, 0.97f, 1.0f}, (head + body * 0.7f) * fade));
+                            }
+                        }
                     }
                 }
                 // clouds: two volumetric layers, lit from the sun side
@@ -266,6 +315,36 @@ public:
                 size_t i = (size_t(cy) * r.w + cx) * 2;
                 p.cell(r.x + cx, r.y + cy, cache_[i], cache_[i + 1]);
             }
+
+        // ── bird flock (daytime overlay) ───────────────────────────────────
+        // A small V-formation of distant birds drifting across the upper sky.
+        // Drawn as moving glyph cells AFTER the cached sky blit (they move every
+        // frame, so baking them into the slow shader cache would stutter). The
+        // glyph's backdrop is sampled from the cached sky so they blend in.
+        if (sun_alt > 2.f) {                      // only in real daylight
+            float day = gfx::smoothstep(2.f, 12.f, sun_alt);
+            // flock anchor sweeps left→right over ~80s, gently bobbing.
+            float t = std::fmod(c.anim, 80.f) / 80.f;
+            float ax = (t * 1.3f - 0.15f) * r.w;            // cells
+            float ay = r.h * 0.18f + std::sin(c.anim * 0.25f) * (r.h * 0.04f);
+            // formation: lead bird + four wing birds in a shallow V.
+            const float off[5][2] = {{0,0},{-2,0.8f},{2,0.8f},{-4,1.6f},{4,1.6f}};
+            Col ink = gfx::scale(Col{0.05f,0.06f,0.10f}, 1.f); // near-black silhouette
+            for (auto& o : off) {
+                int bx = (int)std::lround(ax + o[0]);
+                int by = (int)std::lround(ay + o[1]);
+                if (bx < 1 || bx >= r.w - 1 || by < 1 || by >= r.h - 1) continue;
+                // gentle wing-flap: ‿ (relaxed) vs ⌃-ish via two glyphs.
+                bool up = std::sin(c.anim * 6.f + o[0] * 1.7f) > 0.f;
+                char32_t g = up ? U'˄' : U'ˇ';   // ˄ wings up  /  ˇ wings down
+                size_t ci = (size_t(by) * r.w + bx) * 2;
+                Col sky_here = ci + 1 < cache_.size()
+                             ? gfx::mix(cache_[ci], cache_[ci + 1], 0.5f)
+                             : Col{0.4f,0.6f,0.9f};
+                Col fg = gfx::mix(sky_here, ink, 0.55f + 0.35f * day);
+                p.glyph_cell(r.x + bx, r.y + by, g, fg, sky_here);
+            }
+        }
     }
 
 private:
