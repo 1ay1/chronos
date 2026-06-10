@@ -190,27 +190,27 @@ public:
                     // sky) — saves ~5 fBm calls/pixel over the bottom third.
                     if (band < 0.01f && cirrus_band0 < 0.01f) return col;
                     float day  = gfx::smoothstep(-6.f, 8.f, sun_alt);
-                    float wind = c.anim * 2.0f;   // horizontal drift of the air mass
+                    float wind = c.anim * 5.5f;   // horizontal drift of the air mass
 
                     // normalised cloud-space coords (decouple shape from term size)
                     float u = px * 0.030f, v = py * 0.075f;
 
                     // ── domain warp: offset the lookup by a low-freq flow field.
                     // This bends the noise into billows instead of round blobs.
-                    float wx = gfx::fbm(u * 0.5f - wind * 0.010f, v * 0.5f + 3.1f);
-                    float wy = gfx::fbm(u * 0.5f + 5.7f, v * 0.5f - wind * 0.008f);
+                    float wx = gfx::fbm(u * 0.5f - wind * 0.026f, v * 0.5f + 3.1f);
+                    float wy = gfx::fbm(u * 0.5f + 5.7f, v * 0.5f - wind * 0.020f);
                     float warp = 1.6f;
 
                     // ── low cumulus deck: fat, slow, billowing ────────────────
-                    float cu = gfx::fbm(u + (wx - 0.5f) * warp - wind * 0.018f,
+                    float cu = gfx::fbm(u + (wx - 0.5f) * warp - wind * 0.045f,
                                         v + (wy - 0.5f) * warp + 12.3f);
                     // sharpen tops: cauliflower bias makes crests bulge upward
-                    cu = cu * 0.7f + gfx::fbm(u * 2.1f - wind * 0.026f,
+                    cu = cu * 0.7f + gfx::fbm(u * 2.1f - wind * 0.060f,
                                               v * 2.1f + 7.0f) * 0.3f;
                     float cumulus = gfx::smoothstep(0.54f, 0.60f, cu) * band;
 
                     // ── high cirrus deck: thin, fast, stretched horizontally ──
-                    float ci = gfx::fbm(u * 0.6f - wind * 0.075f,
+                    float ci = gfx::fbm(u * 0.6f - wind * 0.16f,
                                         v * 2.4f + 40.0f);   // y-stretched = streaky
                     float cirrus = gfx::smoothstep(0.62f, 0.70f, ci)
                                  * cirrus_band0 * 0.6f;
@@ -222,7 +222,7 @@ public:
                         // it's denser there, this pixel sits in the cloud's shade.
                         float sdx = (sun_x - px), sdy = (sun_y - py);
                         float sl = 1.f / (std::hypot(sdx, sdy) + 1e-3f);
-                        float ahead = gfx::fbm(u + (wx - 0.5f) * warp - wind * 0.018f
+                        float ahead = gfx::fbm(u + (wx - 0.5f) * warp - wind * 0.045f
                                                  + sdx * sl * 0.18f,
                                                v + (wy - 0.5f) * warp + 12.3f
                                                  + sdy * sl * 0.18f);
@@ -372,9 +372,9 @@ public:
             // `rows_per_frame` rows per frame. Short sweep = band edges update
             // promptly (continuous-feeling motion) while no single frame shades
             // more than a few rows (no hitch). Capped so wide terminals stay cheap.
-            constexpr float SWEEP_S = 0.2f;
+            constexpr float SWEEP_S = 0.12f;
             int rows_per_frame = std::clamp(
-                (int)std::ceil(r.h / (SWEEP_S * 30.f)), 1, 8);
+                (int)std::ceil(r.h / (SWEEP_S * 30.f)), 1, 10);
             for (int n = 0; n < rows_per_frame; ++n) {
                 int cy = shade_row_;
                 for (int cx = 0; cx < r.w; ++cx) {
