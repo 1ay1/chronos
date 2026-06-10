@@ -47,13 +47,20 @@ public:
         float bx = (float)r.x;
         float by = (float)r.y;     // cell-space top
 
-        // Clean legibility on ANY sky: a single tight dark outline (drawn a
-        // touch heavier so it rings the glyph evenly) under a solid bright
-        // body. Two passes, both with the now-crisp rasterizer = sharp
-        // two-tone strokes, no sandpaper grain.
+        // Premium look: (1) a soft wide GLOW that bleeds the accent into the
+        // sky around the glyph (luminous, like the digits emit light); (2) a
+        // tight dark outline for legibility on bright skies; (3) the body as a
+        // vertical GRADIENT — bright cool-white at the top fading to the accent
+        // at the bottom, the backlit-glass sheen high-end clock UIs have.
         Col contour{0.02f, 0.03f, 0.07f};
+        Col glow    = gfx::scale(accent, 0.40f);
+        Col top_ink = night ? Col{1.0f, 1.0f, 1.0f} : Col{0.20f, 0.24f, 0.34f};
+        Col bot_ink = accent;
+        // glow: a fat pass drawn FIRST; the outline + body overpaint the core,
+        // leaving a dim accent ring around the strokes = a neon-tube halo.
+        font::draw_text(p, bx, by, em_q, hhmm, glow, skybg, 0.30f);
         font::draw_text(p, bx, by, em_q, hhmm, contour, skybg, 0.20f);
-        font::draw_text(p, bx, by, em_q, hhmm, accent,  skybg, 0.135f);
+        font::draw_text_grad(p, bx, by, em_q, hhmm, top_ink, bot_ink, skybg, 0.135f);
         // draw_text advances in sub-x units (2 per cell); convert to cells /2.
         float endx = bx + font::measure_em(hhmm) * em_q / 2.f;
 
@@ -63,7 +70,7 @@ public:
         float secs_y = by + (em_q - secs_q) / 4.f;   // (octant-rows → cell-rows)
         std::string ss = std::format("{:02}", c.lt.tm_sec);
         font::draw_text(p, endx + 1.0f, secs_y, secs_q, ss, contour, skybg, 0.22f);
-        font::draw_text(p, endx + 1.0f, secs_y, secs_q, ss, accent,  skybg, 0.135f);
+        font::draw_text_grad(p, endx + 1.0f, secs_y, secs_q, ss, top_ink, bot_ink, skybg, 0.135f);
 
         int date_y = int(by + em_q / 4.f) + 1;
         date_line(p, x, date_y, c, WD, MON, ink, bg);

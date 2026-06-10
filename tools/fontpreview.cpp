@@ -89,18 +89,35 @@ int main(){
     };
 
     float em = 9.0f*4*0.72f;   // ~ rows*4*0.72
-    Col accent{0.95f,0.96f,1.0f};
-    Col contour{0.03f,0.04f,0.09f};
-    Col sheen{1.0f,1.0f,1.0f};
+    Col accent{0.78f,0.86f,1.0f};
+    Col contour{0.02f,0.03f,0.07f};
+    Col glow = mix(Col{0,0,0}, accent, 0.40f);
+    Col top_ink{1.0f,1.0f,1.0f};
+    Col bot_ink = accent;
+    // gradient blit: lerp fg top->bottom by cell row within the em-box
+    auto blit_grad=[&](float py0,float emh,Col ftop,Col fbot){
+        return [&,py0,emh,ftop,fbot](int cx,int cy,int mask,const float covs[8],Col,float a){
+            float vt=std::clamp((cy*4.f - py0*4.f)/emh,0.f,1.f);
+            Col fg=mix(ftop,fbot,vt);
+            for(int r=0;r<4;++r)for(int col=0;col<2;++col){
+                bool lit=mask&(1<<(r*2+col)); float cov=covs[r*2+col];
+                float aa=(0.55f+0.45f*a)*(lit?1.f:cov*0.5f); aa=std::clamp(aa,0.f,1.f);
+                Col ink=mix(sky,fg,aa);
+                int sx=(cx*2+col)*S, sy=(cy*4+r)*S;
+                for(int yy=0;yy<S;++yy)for(int xx=0;xx<S;++xx){int X=sx+xx,Y=sy+yy;if(X<0||X>=W||Y<0||Y>=H)continue;img[Y*W+X]=ink;}
+            }
+        };
+    };
+    fp::draw(COLS,ROWS,1,1,em,"22:50",glow,0.30f,blit);
     fp::draw(COLS,ROWS,1,1,em,"22:50",contour,0.20f,blit);
-    fp::draw(COLS,ROWS,1,1,em,"22:50",accent ,0.135f,blit);
-    (void)sheen;
+    fp::draw(COLS,ROWS,1,1,em,"22:50",top_ink,0.135f,blit_grad(1,em,top_ink,bot_ink));
+
     // seconds after the minutes, smaller, baseline-style
     float endx = 1.f + chronos::font::measure_em("22:50")*em/2.f;
     float sq = em*0.40f;
-    float sy = 1.f + (em - sq)/4.f;
-    fp::draw(COLS,ROWS,endx+1.0f,sy,sq,"35",contour,0.22f,blit);
-    fp::draw(COLS,ROWS,endx+1.0f,sy,sq,"35",accent ,0.135f,blit);
+    float sy2 = 1.f + (em - sq)/4.f;
+    fp::draw(COLS,ROWS,endx+1.0f,sy2,sq,"35",contour,0.22f,blit);
+    fp::draw(COLS,ROWS,endx+1.0f,sy2,sq,"35",top_ink,0.135f,blit_grad(sy2,sq,top_ink,bot_ink));
 
     bool ascii = getenv("ASCII")!=nullptr;
     if(ascii){

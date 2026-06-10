@@ -205,18 +205,19 @@ inline char32_t octant_glyph(int mask) {
 }
 
 // ════════════════════════════════════════════════════════════════════════
-//  draw_text — crisp block-glyph rasterization at any pixel height.
+//  draw_text_grad — crisp block-glyph rasterization with a vertical colour
+//  gradient (fg_top at the glyph top, fg_bot at the bottom).
 //
 //  px,py     : top-left in CELL coords (x = column, y = row).
 //  height_px : em-box height measured in OCTANT rows (= 4 × cell rows).
 //  weight    : stroke thickness as fraction of height.
-//  fg        : ink;  bg_fn(col,row) -> backdrop colour.
-//  Returns advanced x in fractional cells.
+//  fg_top/fg_bot : ink at the top / bottom of the em-box (gradient).
+//  bg_fn(col,row) -> backdrop colour.  Returns advanced x in fractional cells.
 // ═════════════════════════════════════════════════════════════════════════════
 template <class BgFn>
-inline float draw_text(gfx::Painter& p, float px, float py, float height_px,
-                       std::string_view s, Col fg, BgFn&& bg_fn,
-                       float weight = 0.13f) {
+inline float draw_text_grad(gfx::Painter& p, float px, float py, float height_px,
+                            std::string_view s, Col fg_top, Col fg_bot,
+                            BgFn&& bg_fn, float weight = 0.13f) {
     // Octant grid: 2 sub-pixels per cell wide, 4 tall. Sub-pixels are square
     // (cell ~2:1), so we work in a single square sub-pixel space: x has 2 units
     // per cell, y has 4 units per cell. `em` is the glyph height in sub-y units.
@@ -302,11 +303,25 @@ inline float draw_text(gfx::Painter& p, float px, float py, float height_px,
             // threshold) soften toward the sky; everything genuinely on the
             // stroke gets full ink. No per-cell grey ramp = clean strokes.
             float a = gfx::smoothstep(0.50f, 0.78f, max_cov);
+            // vertical gradient: brighter at the top of the em-box, cooler at
+            // the bottom — a backlit-glass / LED sheen. `vt` is this cell's
+            // position 0(top)..1(bottom) within the glyph height.
+            float vt = std::clamp((cy * SY - sy0) / em, 0.f, 1.f);
+            Col fg = gfx::mix(fg_top, fg_bot, vt);
             Col ink = gfx::mix(bg, fg, 0.55f + 0.45f * a);
             p.glyph_cell(cx, cy, octant_glyph(mask), ink, bg);
         }
     }
     return pen / SX;
+}
+
+// flat-colour convenience wrapper (fg_top == fg_bot).
+template <class BgFn>
+inline float draw_text(gfx::Painter& p, float px, float py, float height_px,
+                       std::string_view s, Col fg, BgFn&& bg_fn,
+                       float weight = 0.13f) {
+    return draw_text_grad(p, px, py, height_px, s, fg, fg,
+                          std::forward<BgFn>(bg_fn), weight);
 }
 
 } // namespace chronos::font
