@@ -109,12 +109,12 @@ private:
         float yw = font::measure_em(ys) * em / 2.f;
         float yx = g.right() - yw - 1;
         Col contour{0.02f, 0.03f, 0.07f};
-        Col glow    = gfx::scale(th.accent, 0.40f);
+        Col glow    = gfx::scale(th.accent, 0.45f);
         Col yr_top  = gfx::mix(th.accent, Col{1,1,1}, 0.55f);   // bright top
         Col yr_bot  = th.accent;                                 // accent bottom
-        font::draw_text(p, yx, (float)g.y, em, ys, glow,    skybg, 0.30f);
         font::draw_text(p, yx, (float)g.y, em, ys, contour, skybg, 0.22f);
-        font::draw_text_grad(p, yx, (float)g.y, em, ys, yr_top, yr_bot, skybg, 0.15f);
+        font::draw_text_grad(p, yx, (float)g.y, em, ys, yr_top, yr_bot, skybg,
+                             0.15f, glow, em * 0.16f);
 
         // month name as bold caps text, vertically centred in the band. (The
         // vector font only defines digits/punct — letters have no strokes, so
@@ -303,12 +303,12 @@ private:
         float dw = font::measure_em(ds) * em / 2.f;
         float dx = in.x + (in.w - dw) / 2.f;
         Col contour{0.02f, 0.03f, 0.07f};
-        Col dglow  = gfx::scale(th.accent, 0.40f);
+        Col dglow  = gfx::scale(th.accent, 0.45f);
         Col d_top  = gfx::mix(th.accent, Col{1,1,1}, 0.55f);
         Col d_bot  = th.accent;
-        font::draw_text(p, dx, (float)(y + 4), em, ds, dglow,   cardbg, 0.30f);
         font::draw_text(p, dx, (float)(y + 4), em, ds, contour, cardbg, 0.22f);
-        font::draw_text_grad(p, dx, (float)(y + 4), em, ds, d_top, d_bot, cardbg, 0.15f);
+        font::draw_text_grad(p, dx, (float)(y + 4), em, ds, d_top, d_bot, cardbg,
+                             0.15f, dglow, em * 0.16f);
         int yy = y + 4 + (int)(em / 4.f) + 1;
 
         rule(p, in.x, yy, in.w, th.panel_border, bg); yy++;

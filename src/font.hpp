@@ -217,7 +217,8 @@ inline char32_t octant_glyph(int mask) {
 template <class BgFn>
 inline float draw_text_grad(gfx::Painter& p, float px, float py, float height_px,
                             std::string_view s, Col fg_top, Col fg_bot,
-                            BgFn&& bg_fn, float weight = 0.13f) {
+                            BgFn&& bg_fn, float weight = 0.13f,
+                            Col glow_col = Col{0,0,0}, float glow_px = 0.f) {
     // Octant grid: 2 sub-pixels per cell wide, 4 tall. Sub-pixels are square
     // (cell ~2:1), so we work in a single square sub-pixel space: x has 2 units
     // per cell, y has 4 units per cell. `em` is the glyph height in sub-y units.
@@ -238,18 +239,20 @@ inline float draw_text_grad(gfx::Painter& p, float px, float py, float height_px
     float sx0 = px * SX,  sx1 = pen;
     float sy0 = py * SY,  sy1 = py * SY + em;
 
-    int cx0 = std::max(0, int(std::floor(sx0 / SX)) - 1);
-    int cx1 = std::min(p.cols() - 1, int(std::ceil(sx1 / SX)) + 1);
-    int cy0 = std::max(0, int(std::floor(sy0 / SY)) - 1);
-    int cy1 = std::min(p.rows() - 1, int(std::ceil(sy1 / SY)) + 1);
+    int margin = 1 + (glow_px > 0.f ? int(std::ceil(glow_px / SY)) + 1 : 0);
+    int cx0 = std::max(0, int(std::floor(sx0 / SX)) - margin);
+    int cx1 = std::min(p.cols() - 1, int(std::ceil(sx1 / SX)) + margin);
+    int cy0 = std::max(0, int(std::floor(sy0 / SY)) - margin);
+    int cy1 = std::min(p.rows() - 1, int(std::ceil(sy1 / SY)) + margin);
 
     // signed-distance to the nearest stroke at a sub-pixel-space point.
+    float gmarg = 0.3f + (glow_px > 0.f ? glow_px / em : 0.f);
     auto dist = [&](float sx, float sy) -> float {
         float best = 1e9f;
         for (const Placed& pl : placed) {
             float gx = (sx - pl.ox) / em;            // into normalized em box
             float gy = (sy - sy0) / em;
-            if (gx < -0.3f || gx > pl.g->adv + 0.3f || gy < -0.3f || gy > 1.3f)
+            if (gx < -gmarg || gx > pl.g->adv + gmarg || gy < -gmarg || gy > 1.f + gmarg)
                 continue;
             for (const auto& st : pl.g->strokes) {
                 if (st.size() == 1) {
@@ -296,7 +299,22 @@ inline float draw_text_grad(gfx::Painter& p, float px, float py, float height_px
             // can stay near-solid, which is what kills the sandpaper grain.
             for (int i = 0; i < 8; ++i)
                 if (covs[i] >= 0.5f) mask |= 1 << i;
-            if (mask == 0) continue;             // truly empty — sky shows through
+            if (mask == 0) {
+                // outside the stroke: paint a SOFT glow that falls off with
+                // distance to the nearest stroke (a real gaussian-ish halo,
+                // not a blocky fat outline). Sample the cell centre's SDF.
+                if (glow_px > 0.f) {
+                    float d = dist(bx + 1.f, by + 2.f) - half;   // dist past edge
+                    if (d < glow_px) {
+                        float t = 1.f - std::clamp(d / glow_px, 0.f, 1.f);
+                        float ga = t * t * 0.45f;                // soft, capped
+                        Col bg = bg_fn(cx, cy);
+                        Col lit = gfx::mix(bg, glow_col, ga);
+                        p.glyph_cell(cx, cy, 0x2588, lit, lit); // full block, even tint
+                    }
+                }
+                continue;
+            }
 
             Col bg = bg_fn(cx, cy);
             // Only the very faintest sliver cells (max_cov barely over the

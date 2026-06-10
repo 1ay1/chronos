@@ -47,20 +47,18 @@ public:
         float bx = (float)r.x;
         float by = (float)r.y;     // cell-space top
 
-        // Premium look: (1) a soft wide GLOW that bleeds the accent into the
-        // sky around the glyph (luminous, like the digits emit light); (2) a
-        // tight dark outline for legibility on bright skies; (3) the body as a
-        // vertical GRADIENT — bright cool-white at the top fading to the accent
-        // at the bottom, the backlit-glass sheen high-end clock UIs have.
+        // Premium look: (1) tight dark outline for legibility on bright skies;
+        // (2) body as a vertical GRADIENT (bright cool-white top → accent
+        // bottom = backlit-glass sheen); (3) a TRUE soft glow integrated into
+        // the body pass — a smooth distance falloff halo, not a blocky outline.
         Col contour{0.02f, 0.03f, 0.07f};
-        Col glow    = gfx::scale(accent, 0.40f);
+        Col glow    = night ? gfx::scale(accent, 0.7f) : gfx::scale(accent, 0.4f);
         Col top_ink = night ? Col{1.0f, 1.0f, 1.0f} : Col{0.20f, 0.24f, 0.34f};
         Col bot_ink = accent;
-        // glow: a fat pass drawn FIRST; the outline + body overpaint the core,
-        // leaving a dim accent ring around the strokes = a neon-tube halo.
-        font::draw_text(p, bx, by, em_q, hhmm, glow, skybg, 0.30f);
+        float glow_px = em_q * 0.18f;                 // halo radius in sub-pixels
         font::draw_text(p, bx, by, em_q, hhmm, contour, skybg, 0.20f);
-        font::draw_text_grad(p, bx, by, em_q, hhmm, top_ink, bot_ink, skybg, 0.135f);
+        font::draw_text_grad(p, bx, by, em_q, hhmm, top_ink, bot_ink, skybg,
+                             0.135f, glow, glow_px);
         // draw_text advances in sub-x units (2 per cell); convert to cells /2.
         float endx = bx + font::measure_em(hhmm) * em_q / 2.f;
 

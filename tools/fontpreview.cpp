@@ -32,7 +32,8 @@ inline bool bit(char32_t, int){ return false; }
 
 template <class Sink>
 float draw(int cols, int rows, float px, float py, float em,
-           std::string_view s, Col fg, float weight, Sink&& sink) {
+           std::string_view s, Col fg, float weight, Sink&& sink,
+           Col glow_col=Col{0,0,0}, float glow_px=0.f) {
     const float SX=2.f, SY=4.f;
     const float half = std::max(0.85f, weight*em*0.5f);
     struct Placed{const Glyph*g;float ox;};
@@ -40,11 +41,13 @@ float draw(int cols, int rows, float px, float py, float em,
     for(size_t i=0;i<s.size();){char32_t cp;i+=chronos::gfx::utf8_decode(s,i,cp);
         const Glyph&g=glyph(cp);placed.push_back({&g,pen});pen+=(g.adv+0.08f)*em;}
     float sy0=py*SY;
-    int cx0=std::max(0,int(std::floor(px))-1), cx1=std::min(cols-1,int(std::ceil(pen/SX))+1);
-    int cy0=std::max(0,int(std::floor(py))-1), cy1=std::min(rows-1,int(std::ceil((sy0+em)/SY))+1);
+    int mg=1+(glow_px>0.f?int(std::ceil(glow_px/SY))+1:0);
+    int cx0=std::max(0,int(std::floor(px))-mg), cx1=std::min(cols-1,int(std::ceil(pen/SX))+mg);
+    int cy0=std::max(0,int(std::floor(py))-mg), cy1=std::min(rows-1,int(std::ceil((sy0+em)/SY))+mg);
+    float gmarg=0.3f+(glow_px>0.f?glow_px/em:0.f);
     auto dist=[&](float sx,float sy){float best=1e9f;for(auto&pl:placed){
         float gx=(sx-pl.ox)/em,gy=(sy-sy0)/em;
-        if(gx<-0.3f||gx>pl.g->adv+0.3f||gy<-0.3f||gy>1.3f)continue;
+        if(gx<-gmarg||gx>pl.g->adv+gmarg||gy<-gmarg||gy>1.f+gmarg)continue;
         for(auto&st:pl.g->strokes){if(st.size()==1){float dx=(gx-st[0].x)*em,dy=(gy-st[0].y)*em;best=std::min(best,std::sqrt(dx*dx+dy*dy));continue;}
             for(size_t k=0;k+1<st.size();++k)best=std::min(best,seg_dist(gx,gy,st[k],st[k+1])*em);}}return best;};
     auto sub_cov=[&](float sx,float sy){float a=0;for(int sj=0;sj<3;++sj)for(int si=0;si<3;++si){
@@ -53,7 +56,13 @@ float draw(int cols, int rows, float px, float py, float em,
         float bx=cx*SX,by=cy*SY;float covs[8];float mx=0;
         for(int r=0;r<4;++r)for(int col=0;col<2;++col){float cov=sub_cov(bx+col,by+r);covs[r*2+col]=cov;mx=std::max(mx,cov);}
         int mask=0;for(int i=0;i<8;++i)if(covs[i]>=0.5f)mask|=1<<i;
-        if(!mask)continue;
+        if(!mask){
+            if(glow_px>0.f){float d=dist(bx+1.f,by+2.f)-half;
+                if(d<glow_px){float t=1.f-std::clamp(d/glow_px,0.f,1.f);float ga=t*t*0.45f;
+                    float full[8]={ga,ga,ga,ga,ga,ga,ga,ga};
+                    sink(cx,cy,255,full,glow_col,1.f); }}
+            continue;
+        }
         float a=smoothstep(0.50f,0.78f,mx);
         sink(cx,cy,mask,covs,fg,a);
     }
@@ -94,30 +103,34 @@ int main(){
     Col glow = mix(Col{0,0,0}, accent, 0.40f);
     Col top_ink{1.0f,1.0f,1.0f};
     Col bot_ink = accent;
-    // gradient blit: lerp fg top->bottom by cell row within the em-box
+    // gradient body blit (lit) AND glow blit (mask==255, covs=alpha): when a
+    // cell comes from the glow branch we just tint by its alpha; lit body
+    // cells use the gradient.
     auto blit_grad=[&](float py0,float emh,Col ftop,Col fbot){
-        return [&,py0,emh,ftop,fbot](int cx,int cy,int mask,const float covs[8],Col,float a){
+        return [&,py0,emh,ftop,fbot](int cx,int cy,int mask,const float covs[8],Col gc,float a){
             float vt=std::clamp((cy*4.f - py0*4.f)/emh,0.f,1.f);
-            Col fg=mix(ftop,fbot,vt);
+            bool is_glow = (a==1.f && mask==255 && covs[0]<0.46f); // glow marker
+            Col fg = is_glow ? gc : mix(ftop,fbot,vt);
             for(int r=0;r<4;++r)for(int col=0;col<2;++col){
                 bool lit=mask&(1<<(r*2+col)); float cov=covs[r*2+col];
-                float aa=(0.55f+0.45f*a)*(lit?1.f:cov*0.5f); aa=std::clamp(aa,0.f,1.f);
+                float aa = is_glow ? cov : (0.55f+0.45f*a)*(lit?1.f:cov*0.5f);
+                aa=std::clamp(aa,0.f,1.f);
                 Col ink=mix(sky,fg,aa);
                 int sx=(cx*2+col)*S, sy=(cy*4+r)*S;
                 for(int yy=0;yy<S;++yy)for(int xx=0;xx<S;++xx){int X=sx+xx,Y=sy+yy;if(X<0||X>=W||Y<0||Y>=H)continue;img[Y*W+X]=ink;}
             }
         };
     };
-    fp::draw(COLS,ROWS,1,1,em,"22:50",glow,0.30f,blit);
+    float glow_px = em*0.18f;
     fp::draw(COLS,ROWS,1,1,em,"22:50",contour,0.20f,blit);
-    fp::draw(COLS,ROWS,1,1,em,"22:50",top_ink,0.135f,blit_grad(1,em,top_ink,bot_ink));
+    fp::draw(COLS,ROWS,1,1,em,"22:50",top_ink,0.135f,blit_grad(1,em,top_ink,bot_ink),glow,glow_px);
 
     // seconds after the minutes, smaller, baseline-style
     float endx = 1.f + chronos::font::measure_em("22:50")*em/2.f;
     float sq = em*0.40f;
     float sy2 = 1.f + (em - sq)/4.f;
     fp::draw(COLS,ROWS,endx+1.0f,sy2,sq,"35",contour,0.22f,blit);
-    fp::draw(COLS,ROWS,endx+1.0f,sy2,sq,"35",top_ink,0.135f,blit_grad(sy2,sq,top_ink,bot_ink));
+    fp::draw(COLS,ROWS,endx+1.0f,sy2,sq,"35",top_ink,0.135f,blit_grad(sy2,sq,top_ink,bot_ink),glow,sq*0.18f);
 
     bool ascii = getenv("ASCII")!=nullptr;
     if(ascii){
