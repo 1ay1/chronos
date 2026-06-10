@@ -36,6 +36,54 @@ inline Col sky_palette(float alt, float v /*0 horizon..1 zenith*/) {
     return gfx::mix(hor, zen, std::pow(v, 0.65f));
 }
 
+// ── weather → scene parameters ───────────────────────────────────────────────
+// Translates the live WMO weather code (+ wind) into a small set of dials the
+// sky shader reads: how much cloud cover, how hard it's raining/snowing, fog
+// density, storm darkening, and lightning. Everything is a smooth 0..1 so the
+// scene can be cross-faded between conditions instead of snapping.
+struct WeatherViz {
+    float cloud   = 0.f;   // extra cloud cover (0 clear .. 1 full overcast)
+    float rain    = 0.f;   // rain intensity 0..1
+    float snow    = 0.f;   // snow intensity 0..1
+    float fog     = 0.f;   // fog veil 0..1
+    float storm   = 0.f;   // storm darkening 0..1 (also enables lightning)
+    float wind    = 1.f;   // wind multiplier on cloud drift (1 = calm baseline)
+    bool  active  = false; // we have real data driving the scene
+};
+
+inline WeatherViz weather_viz(const chronos::weather::Weather& w) {
+    WeatherViz s;
+    if (!w.valid) return s;          // no data → leave the fair-weather default
+    s.active = true;
+    s.wind = std::clamp(0.6f + (float)w.wind_kmh / 30.f, 0.6f, 3.0f);
+    switch (w.code) {
+        case 0:                 s.cloud = 0.00f; break;               // clear
+        case 1:                 s.cloud = 0.18f; break;               // mainly clear
+        case 2:                 s.cloud = 0.50f; break;               // partly cloudy
+        case 3:                 s.cloud = 0.95f; break;               // overcast
+        case 45: case 48:       s.cloud = 0.70f; s.fog = 0.85f; break; // fog
+        case 51: case 53: case 55:                                    // drizzle
+        case 56: case 57:       s.cloud = 0.80f; s.rain = 0.35f; break;
+        case 61:                s.cloud = 0.85f; s.rain = 0.45f; break; // light rain
+        case 63:                s.cloud = 0.90f; s.rain = 0.65f; break; // rain
+        case 65:                s.cloud = 1.00f; s.rain = 0.95f; break; // heavy rain
+        case 66: case 67:       s.cloud = 0.95f; s.rain = 0.70f; break; // freezing rain
+        case 80:                s.cloud = 0.80f; s.rain = 0.55f; break; // showers
+        case 81:                s.cloud = 0.90f; s.rain = 0.75f; break;
+        case 82:                s.cloud = 1.00f; s.rain = 1.00f; break; // violent showers
+        case 71:                s.cloud = 0.85f; s.snow = 0.45f; break; // light snow
+        case 73:                s.cloud = 0.90f; s.snow = 0.70f; break;
+        case 75:                s.cloud = 1.00f; s.snow = 1.00f; break; // heavy snow
+        case 77:                s.cloud = 0.80f; s.snow = 0.40f; break; // snow grains
+        case 85:                s.cloud = 0.90f; s.snow = 0.65f; break; // snow showers
+        case 86:                s.cloud = 1.00f; s.snow = 0.95f; break;
+        case 95:                s.cloud = 1.00f; s.rain = 0.70f; s.storm = 0.85f; break; // thunderstorm
+        case 96: case 99:       s.cloud = 1.00f; s.rain = 0.85f; s.storm = 1.00f; break; // storm + hail
+        default:                s.cloud = 0.40f; break;
+    }
+    return s;
+}
+
 class SkyWidget : public Widget {
 public:
     const char* name() const override { return "sky"; }
@@ -50,6 +98,42 @@ public:
         const float horizon_y = PH * 0.62f;
         const float sun_alt = (float)c.sun.altitude;
         const bool  night = sun_alt < -6.f;
+
+        // ── weather: ease the live conditions toward their target so a change
+        //    (clear → storm) cross-fades over a couple of seconds instead of
+        //    snapping. The eased dials drive cloud cover, storm darkening, and
+        //    the precip/fog overlays below.
+        WeatherViz tgt = weather_viz(c.weather);
+        float ease = std::clamp((c.anim - last_anim_) * 0.6f, 0.f, 1.f);
+        last_anim_ = c.anim;
+        auto approach = [&](float& cur, float to){ cur += (to - cur) * ease; };
+        approach(viz_.cloud, tgt.cloud); approach(viz_.rain, tgt.rain);
+        approach(viz_.snow,  tgt.snow);  approach(viz_.fog,  tgt.fog);
+        approach(viz_.storm, tgt.storm); approach(viz_.wind, tgt.wind);
+        viz_.active = tgt.active;
+        const WeatherViz vz = viz_;
+        // a sky reshade whenever the eased weather has visibly moved, so the
+        // cached scene tracks the new cloud cover / storm darkening promptly.
+        if (std::abs(vz.cloud - shaded_cloud_) > 0.02f ||
+            std::abs(vz.storm - shaded_storm_) > 0.02f) {
+            dirty_ = true; shaded_cloud_ = vz.cloud; shaded_storm_ = vz.storm;
+        }
+
+        // lightning: during a storm, fire brief bright flashes at random. A
+        // flash is a fast attack + slow decay envelope keyed off epochs of the
+        // free-running clock. `flash` is a global 0..~1 brightness this frame.
+        float flash = 0.f;
+        if (vz.storm > 0.05f) {
+            float T = c.anim / 2.6f;                 // ~one window every 2.6s
+            float epoch = std::floor(T), prog = T - epoch;
+            float seed = gfx::hash2(epoch * 5.3f, 1.9f);
+            if (seed < 0.30f + 0.45f * vz.storm) {   // stormier = more frequent
+                // double-strike: two quick decays inside the window
+                float a = std::exp(-prog * 14.f);
+                float b = 0.6f * std::exp(-std::abs(prog - 0.12f) * 22.f);
+                flash = std::min(1.f, (a + b) * (0.5f + 0.5f * vz.storm));
+            }
+        }
 
         auto place = [&](double az, double alt) {
             float ax = std::clamp((float)((az - 90.0) / 180.0), -0.2f, 1.2f);
@@ -192,13 +276,22 @@ public:
                     float band = gfx::smoothstep(horizon_y, horizon_y * 0.20f, py);
                     float cirrus_band0 = gfx::smoothstep(horizon_y * 0.62f, 0.f, py);
                     // skip all cloud noise where neither deck can show (lower
-                    // sky) — saves ~5 fBm calls/pixel over the bottom third.
-                    if (band < 0.01f && cirrus_band0 < 0.01f) return col;
+                    // sky) — saves ~5 fBm calls/pixel over the bottom third. The
+                    // storm/flash pass below still runs, so a stormy lower sky
+                    // stays dark.
+                    if (band >= 0.01f || cirrus_band0 >= 0.01f) {
                     float day  = gfx::smoothstep(-6.f, 8.f, sun_alt);
-                    float wind = c.anim * 2.2f;   // horizontal drift of the air mass
+                    float wind = c.anim * 2.2f * vz.wind;   // drift scaled by real wind
 
                     // normalised cloud-space coords (decouple shape from term size)
                     float u = px * 0.030f, v = py * 0.075f;
+
+                    // weather cloud cover lowers the density threshold so more of
+                    // the sky fills in; full overcast pushes it to a near-solid
+                    // grey deck. `cover` 0 (fair) .. 1 (overcast).
+                    float cover = vz.cloud;
+                    float cu_lo = 0.54f - cover * 0.34f;   // 0.54 fair .. 0.20 overcast
+                    float cu_hi = 0.60f - cover * 0.30f;
 
                     // ── domain warp: offset the lookup by a low-freq flow field.
                     // This bends the noise into billows instead of round blobs.
@@ -212,12 +305,12 @@ public:
                     // sharpen tops: cauliflower bias makes crests bulge upward
                     cu = cu * 0.7f + gfx::fbm(u * 2.1f - wind * 0.060f,
                                               v * 2.1f + 7.0f) * 0.3f;
-                    float cumulus = gfx::smoothstep(0.54f, 0.60f, cu) * band;
+                    float cumulus = gfx::smoothstep(cu_lo, cu_hi, cu) * band;
 
                     // ── high cirrus deck: thin, fast, stretched horizontally ──
                     float ci = gfx::fbm(u * 0.6f - wind * 0.16f,
                                         v * 2.4f + 40.0f);   // y-stretched = streaky
-                    float cirrus = gfx::smoothstep(0.62f, 0.70f, ci)
+                    float cirrus = gfx::smoothstep(0.62f - cover * 0.20f, 0.70f - cover * 0.18f, ci)
                                  * cirrus_band0 * 0.6f;
 
                     // composite (cumulus dominates where present)
@@ -241,6 +334,11 @@ public:
                         Col hi = gfx::mix(Col{0.55f,0.40f,0.42f},
                                           Col{1.0f,0.99f,0.98f},
                                           gfx::smoothstep(-6.f, 4.f, sun_alt));
+                        // storm clouds turn heavy charcoal grey; overcast pulls
+                        // the highlight toward a flat dull grey deck.
+                        lo = gfx::mix(lo, Col{0.05f,0.05f,0.07f}, vz.storm * 0.8f);
+                        hi = gfx::mix(hi, Col{0.40f,0.41f,0.46f}, vz.storm * 0.7f);
+                        hi = gfx::mix(hi, Col{0.62f,0.63f,0.68f}, vz.cloud * 0.35f * day);
                         Col cc = gfx::mix(lo, hi, lit);
 
                         // warm/gold rim where the cloud edge catches a low sun
@@ -262,7 +360,18 @@ public:
                         float opacity = gfx::smoothstep(0.04f, 0.30f, dens);
                         col = gfx::mix(col, cc, opacity);
                     }
+                    } // end cloud-body guard
                 }
+                // storm: drain colour and darken the whole sky so the scene
+                // reads as a brooding overcast; a lightning flash briefly lifts
+                // it toward a cold blue-white.
+                if (vz.storm > 0.01f) {
+                    Col gloom = gfx::scale(col, 0.55f);
+                    gloom = gfx::mix(gloom, Col{0.10f,0.11f,0.14f}, 0.35f);
+                    col = gfx::mix(col, gloom, vz.storm);
+                }
+                if (flash > 0.001f)
+                    col = gfx::add(col, gfx::scale(Col{0.55f,0.62f,0.85f}, flash * 0.9f));
                 return gfx::posterize(gfx::saturate(col, 1.25f), 8.f);
             }
             // ground — layered rolling hills with atmospheric depth.
@@ -453,6 +562,93 @@ public:
                 p.glyph_cell(r.x + bx, r.y + by, g, fg, sky_here);
             }
         }
+
+        // ── precipitation + fog overlay ─────────────────────────────────────
+        // Drawn AFTER the cached sky blit because it moves every frame. We
+        // composite per sub-pixel over the cached colours: rain = fast diagonal
+        // streaks, snow = slow drifting flakes, fog = a soft grey veil thickest
+        // near the ground. Cheap: a couple of hashed lookups per cell, only when
+        // some precip is active.
+        const WeatherViz& w = viz_;
+        if (w.rain > 0.01f || w.snow > 0.01f || w.fog > 0.01f) {
+            const int PWv = r.w, PHv = r.h * 2;
+            const float horizon = PHv * 0.62f;
+            // wind-driven slant for rain (and a gentle sway for snow)
+            float slant = std::clamp((w.wind - 1.f) * 0.5f, -0.6f, 0.9f) + 0.25f;
+            auto sky_at = [&](int cx, int cy) -> std::pair<Col,Col> {
+                size_t i = (size_t(cy) * r.w + cx) * 2;
+                if (i + 1 < cache_.size()) return {cache_[i], cache_[i + 1]};
+                return {Col{0.2f,0.3f,0.5f}, Col{0.2f,0.3f,0.5f}};
+            };
+            // rain streak field: a moving column of fast vertical noise. A cell
+            // lights up where a hashed "drop" passes through it this frame.
+            auto precip = [&](float px, float py) -> Col {
+                Col add{0,0,0};
+                if (py > horizon + 2.f) return add;          // no precip into the ground
+                if (w.rain > 0.01f) {
+                    float fall = c.anim * 38.f;              // drops/sec descent
+                    float col_x = px - py * slant;           // slanted columns
+                    float lane  = std::floor(col_x * 0.5f);
+                    float seed  = gfx::hash2(lane, 11.3f);
+                    if (seed < 0.30f + 0.55f * w.rain) {     // denser = more lanes
+                        float speed = 0.8f + 0.5f * gfx::hash2(lane, 4.1f);
+                        float phase = py + fall * speed + seed * 50.f;
+                        float seg   = phase - std::floor(phase / 5.f) * 5.f; // 0..5 streak
+                        float streak = gfx::smoothstep(2.2f, 0.f, seg) *
+                                       gfx::smoothstep(0.9f, 0.f, std::abs(col_x - (lane*2.f+1.f)));
+                        add = gfx::add(add, gfx::scale(Col{0.62f,0.72f,0.92f},
+                                       streak * (0.30f + 0.45f * w.rain)));
+                    }
+                }
+                if (w.snow > 0.01f) {
+                    float fall = c.anim * 9.f;
+                    // flakes sway sideways as they fall (sinusoidal drift)
+                    float drift = std::sin((py * 0.20f) + c.anim * 1.2f) * 2.0f;
+                    float fx = px + drift;
+                    float cellx = std::floor(fx * 0.5f);
+                    float row   = std::floor((py + fall) * 0.4f);
+                    float seed  = gfx::hash2(cellx, row * 1.7f);
+                    if (seed < 0.10f + 0.30f * w.snow) {
+                        float sxp = gfx::hash2(cellx * 3.1f, row);
+                        float fxx = (cellx * 2.f) + sxp * 2.f;
+                        float fyy = std::floor(py) + 0.5f;
+                        float d = std::hypot(fx - fxx, py - fyy);
+                        float flake = gfx::smoothstep(1.0f, 0.f, d);
+                        add = gfx::add(add, gfx::scale(Col{0.92f,0.95f,1.0f},
+                                       flake * (0.55f + 0.40f * w.snow)));
+                    }
+                }
+                return add;
+            };
+            for (int cy = 0; cy < r.h; ++cy) {
+                for (int cx = 0; cx < r.w; ++cx) {
+                    float px = float(cx);
+                    float py0 = cy * 2.f + 0.5f, py1 = cy * 2.f + 1.5f;
+                    Col r0 = precip(px, py0), r1 = precip(px, py1);
+                    // fog: a grey veil whose density rises toward the horizon
+                    // band and washes out colour. Animated with a slow breathing
+                    // noise so it drifts.
+                    float f0 = 0.f, f1 = 0.f;
+                    if (w.fog > 0.01f) {
+                        auto fogv = [&](float py){
+                            float nearH = gfx::smoothstep(horizon * 0.30f, horizon, py)
+                                        * gfx::smoothstep(horizon + PHv*0.18f, horizon*0.7f, py);
+                            float n = gfx::fbm(px*0.05f - c.anim*0.06f, py*0.05f + 3.f);
+                            return std::clamp(w.fog * (0.45f + 0.55f*nearH) * (0.6f+0.5f*n), 0.f, 0.9f);
+                        };
+                        f0 = fogv(py0); f1 = fogv(py1);
+                    }
+                    bool any = (r0.r+r0.g+r0.b) > 0.002f || (r1.r+r1.g+r1.b) > 0.002f
+                             || f0 > 0.002f || f1 > 0.002f;
+                    if (!any) continue;
+                    auto [s0, s1] = sky_at(cx, cy);
+                    Col fog_col{0.62f,0.64f,0.70f};
+                    Col o0 = gfx::add(gfx::mix(s0, fog_col, f0), r0);
+                    Col o1 = gfx::add(gfx::mix(s1, fog_col, f1), r1);
+                    p.cell(r.x + cx, r.y + cy, o0, o1);
+                }
+            }
+        }
     }
 
 private:
@@ -460,6 +656,9 @@ private:
     int  cw_ = -1, ch_ = -1;
     int  shade_row_ = 0;       // incremental-shade cursor (rows swept per frame)
     bool dirty_ = false;       // full reshade requested (instant response to input)
+    WeatherViz viz_{};         // eased weather dials (cross-fades between codes)
+    float last_anim_ = 0.f;    // previous frame clock, for frame-rate-independent ease
+    float shaded_cloud_ = -1.f, shaded_storm_ = -1.f;  // last values baked into cache_
 };
 
 // helper other widgets use to scrim text legibly over the sky

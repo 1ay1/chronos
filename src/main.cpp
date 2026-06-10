@@ -45,6 +45,10 @@ public:
         if (const char* la = std::getenv("CHRONOS_LAT")) lat_ = std::atof(la);
         if (const char* lo = std::getenv("CHRONOS_LON")) lon_ = std::atof(lo);
         if (const char* pl = std::getenv("CHRONOS_PLACE")) place_ = pl;
+        // optional: force a weather code to preview a scene (clear=0, overcast=3,
+        // fog=45, rain=61/63/65, snow=71/73/75, thunderstorm=95/99).
+        if (const char* wc = std::getenv("CHRONOS_WX_CODE")) wx_force_code_ = std::atoi(wc);
+        if (const char* ww = std::getenv("CHRONOS_WX_WIND")) wx_force_wind_ = std::atof(ww);
 
         sky_      = std::make_unique<ui::SkyWidget>();
         clock_    = std::make_unique<ui::ClockWidget>();
@@ -98,6 +102,14 @@ public:
         c.sun_times = chronos::astro::sun_times(
             c.lt.tm_year + 1900, c.lt.tm_mon + 1, c.lt.tm_mday, lat_, lon_, c.tz_offset);
         c.weather = wx_.snapshot();
+        // preview override: stamp a forced condition so any scene can be seen
+        // on demand (CHRONOS_WX_CODE / CHRONOS_WX_WIND).
+        if (wx_force_code_ >= 0) {
+            c.weather.valid = true;
+            c.weather.code  = wx_force_code_;
+            c.weather.wind_kmh = wx_force_wind_;
+            c.weather.is_day = c.sun.altitude > 0;
+        }
 
         // ── layout ──────────────────────────────────────────────────────────
         ui::Rect full{0, 0, W, H};
@@ -165,6 +177,8 @@ private:
     double time_warp_ = 0, warp_rate_ = 0;
     float  anim_ = 0;
     bool   show_calendar_ = false, show_clocks_ = false;
+    int    wx_force_code_ = -1;       // CHRONOS_WX_CODE preview override (-1 = live)
+    double wx_force_wind_ = 12.0;     // CHRONOS_WX_WIND preview wind speed (km/h)
 
     std::unique_ptr<ui::SkyWidget>         sky_;
     std::unique_ptr<ui::ClockWidget>       clock_;

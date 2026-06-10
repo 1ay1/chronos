@@ -100,6 +100,29 @@ never stalls; data refreshes every ~10 minutes. Until the first fetch lands (or
 if you're offline) the card shows a quiet “fetching…” / “offline” state and keeps
 the last good reading.
 
+### The sky reacts to the weather
+
+The living sky isn't just decoration — it **animates to match the real
+conditions**. The fetched WMO weather code drives the scene and cross-fades
+between states over a couple of seconds:
+
+- **Clear / partly cloudy** — open sky with a few drifting cumulus.
+- **Overcast** — a full grey cloud deck rolls in.
+- **Rain** — wind-slanted streaks fall under a heavy sky (harder rain = denser).
+- **Snow** — flakes drift down, swaying as they fall.
+- **Fog** — a soft grey veil thickens toward the horizon and washes out colour.
+- **Thunderstorm** — the sky darkens to a brooding charcoal and **lightning
+  flashes** strike at random.
+
+Wind speed scales how fast the clouds advect. To preview any scene without
+waiting on the weather, force a code:
+
+```bash
+CHRONOS_WX_CODE=95 CHRONOS_WX_WIND=30 ./build/chronos   # thunderstorm
+CHRONOS_WX_CODE=75 ./build/chronos                      # heavy snow
+CHRONOS_WX_CODE=45 ./build/chronos                      # fog
+```
+
 ## How it works
 
 Every section is a self-contained **graphical widget** that paints itself into a
