@@ -111,12 +111,16 @@ inline Glyph make(char32_t cp) {
         g.strokes = { o, tail };
         break; }
     case U':': {
-        g.adv = 0.32f;
-        // dots centred on the glyph's OWN advance box (cx = adv/2), not the
-        // digit centre M=0.5 which sits outside a 0.32-wide box and vanished.
+        g.adv = 0.36f;
+        // two bold dots centred on the glyph's own advance box. Each dot is a
+        // short vertical micro-segment so the rasterizer fills a tall rounded
+        // blob (more visible than a single point at small em).
         float cx = g.adv * 0.5f;
-        g.strokes = { { {cx, T+qy*0.55f}, {cx, T+qy*0.55f+0.06f} },
-                      { {cx, B-qy*0.55f-0.06f}, {cx, B-qy*0.55f} } };
+        float y0 = T + qy * 0.58f;       // upper dot centre
+        float y1 = B - qy * 0.58f;       // lower dot centre
+        float h  = 0.045f;               // half-height of each blob
+        g.strokes = { { {cx, y0 - h}, {cx, y0 + h} },
+                      { {cx, y1 - h}, {cx, y1 + h} } };
         break; }
     case U'.':
         g.adv = 0.28f;
@@ -288,11 +292,11 @@ inline float draw_text(gfx::Painter& p, float px, float py, float height_px,
                     max_cov = std::max(max_cov, cov);
                 }
             cell_cov *= (1.f / 8.f);
-            // Pick the block shape from the sub-pixels above a LOW threshold so
-            // a thin stroke clipping a cell still lights its quadrant (better
-            // shape) — the staircase is then dissolved by the analog ink fade.
+            // Pick the block shape from the sub-pixels above a threshold. A
+            // higher floor rejects faint fringe sub-pixels (the speckle around
+            // glyph edges) so only sub-pixels genuinely on the stroke light up.
             for (int i = 0; i < 8; ++i)
-                if (covs[i] >= 0.35f) mask |= 1 << i;
+                if (covs[i] >= 0.45f) mask |= 1 << i;
             if (mask == 0) continue;             // truly empty — sky shows through
 
             Col bg = bg_fn(cx, cy);
@@ -302,8 +306,8 @@ inline float draw_text(gfx::Painter& p, float px, float py, float height_px,
             // sub-pixels) is what kills the blocky staircase — partial cells
             // read as smooth grey ramps, like real sub-pixel antialiasing.
             float fill = std::max(cell_cov, max_cov * 0.6f);
-            float a = gfx::smoothstep(0.10f, 0.85f, fill);
-            Col ink = gfx::mix(bg, fg, 0.18f + 0.82f * a);
+            float a = gfx::smoothstep(0.18f, 0.92f, fill);
+            Col ink = gfx::mix(bg, fg, 0.06f + 0.94f * a);
             p.glyph_cell(cx, cy, octant_glyph(mask), ink, bg);
         }
     }

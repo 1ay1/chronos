@@ -52,9 +52,9 @@ float draw(int cols, int rows, float px, float py, float em,
     for(int cy=cy0;cy<=cy1;++cy)for(int cx=cx0;cx<=cx1;++cx){
         float bx=cx*SX,by=cy*SY;float covs[8];float cc=0,mx=0;
         for(int r=0;r<4;++r)for(int col=0;col<2;++col){float cov=sub_cov(bx+col,by+r);covs[r*2+col]=cov;cc+=cov;mx=std::max(mx,cov);}
-        cc/=8.f;int mask=0;for(int i=0;i<8;++i)if(covs[i]>=0.35f)mask|=1<<i;
+        cc/=8.f;int mask=0;for(int i=0;i<8;++i)if(covs[i]>=0.45f)mask|=1<<i;
         if(!mask)continue;
-        float fill=std::max(cc,mx*0.6f);float a=smoothstep(0.10f,0.85f,fill);
+        float fill=std::max(cc,mx*0.6f);float a=smoothstep(0.18f,0.92f,fill);
         sink(cx,cy,mask,covs,fg,a);
     }
     return pen/SX;
