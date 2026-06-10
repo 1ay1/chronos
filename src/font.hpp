@@ -69,8 +69,8 @@ inline Glyph make(char32_t cp) {
         g.strokes = { o };                               // clean ellipse, no slash
         break; }
     case U'1':
-        g.adv = 0.48f;
-        g.strokes = { { {L+0.02f,T+0.18f},{M,T},{M,B} }, { {L-0.04f,B},{R-0.08f,B} } };
+        g.adv = 0.46f;
+        g.strokes = { { {L+0.06f,T+0.20f},{M,T},{M,B} }, { {L-0.02f,B},{R-0.06f,B} } };
         break;
     case U'2': {
         std::vector<Pt> s; arc(s, M, T+qy*0.58f, rx, qy*0.58f, PI*0.95f, -PI*0.28f, 18);
@@ -84,8 +84,8 @@ inline Glyph make(char32_t cp) {
         g.strokes = { s };
         break; }
     case U'4':
-        g.strokes = { { {R-0.10f,B},{R-0.10f,T} },
-                      { {R-0.10f,T},{L-0.04f,C+0.16f},{R+0.04f,C+0.16f} } };
+        g.strokes = { { {R-0.08f,T},{R-0.08f,B} },
+                      { {R-0.08f,T},{L-0.02f,C+0.18f},{R+0.06f,C+0.18f} } };
         break;
     case U'5': {
         std::vector<Pt> s = { {R-0.02f,T},{L,T},{L,C-0.04f} };
@@ -98,7 +98,7 @@ inline Glyph make(char32_t cp) {
         g.strokes = { o, tail };
         break; }
     case U'7':
-        g.strokes = { { {L,T},{R,T},{M-0.06f,B} } };
+        g.strokes = { { {L-0.02f,T},{R,T},{M-0.04f,B} } };
         break;
     case U'8': {
         std::vector<Pt> top; arc(top, M, T+qy*0.5f, rx*0.84f, qy*0.5f, 0, 2*PI, 26);
@@ -235,8 +235,8 @@ inline float draw_text(gfx::Painter& p, float px, float py, float height_px,
     int cy0 = std::max(0, int(std::floor(sy0 / SY)) - 1);
     int cy1 = std::min(p.rows() - 1, int(std::ceil(sy1 / SY)) + 1);
 
-    // signed-distance test of a sub-pixel-space point against all strokes.
-    auto inked = [&](float sx, float sy) -> bool {
+    // signed-distance to the nearest stroke at a sub-pixel-space point.
+    auto dist = [&](float sx, float sy) -> float {
         float best = 1e9f;
         for (const Placed& pl : placed) {
             float gx = (sx - pl.ox) / em;            // into normalized em box
@@ -253,16 +253,20 @@ inline float draw_text(gfx::Painter& p, float px, float py, float height_px,
                     best = std::min(best, seg_dist(gx, gy, st[k], st[k+1]) * em);
             }
         }
-        return best <= half;
+        return best;
     };
 
-    // one octant sub-pixel: 3×3 supersample, majority vote → crisp but smooth.
-    auto sub_on = [&](float sx, float sy) -> bool {
-        int hit = 0;
+    // analog coverage of one octant sub-pixel: average a 3×3 grid of
+    // SDF samples, each feathered by ~1px around the half-stroke edge.
+    // Returns 0..1 — NOT a hard threshold, so edges anti-alias.
+    auto sub_cov = [&](float sx, float sy) -> float {
+        float acc = 0.f;
         for (int sj = 0; sj < 3; ++sj)
-            for (int si = 0; si < 3; ++si)
-                if (inked(sx + (si + 0.5f) / 3.f, sy + (sj + 0.5f) / 3.f)) ++hit;
-        return hit >= 5;
+            for (int si = 0; si < 3; ++si) {
+                float d = dist(sx + (si + 0.5f) / 3.f, sy + (sj + 0.5f) / 3.f);
+                acc += gfx::smoothstep(half + 0.6f, half - 0.6f, d);
+            }
+        return acc * (1.f / 9.f);
     };
 
     for (int cy = cy0; cy <= cy1; ++cy) {
@@ -270,12 +274,32 @@ inline float draw_text(gfx::Painter& p, float px, float py, float height_px,
             float bx = cx * SX, by = cy * SY;
             // 8 octant sub-pixels: bit = r*2 + c  (r 0..3 top→bottom, c 0..1)
             int mask = 0;
+            float lit_sum = 0.f;   // coverage of the sub-pixels we light
+            int   lit_n   = 0;
+            float any_max = 0.f;
             for (int r = 0; r < 4; ++r)
-                for (int col = 0; col < 2; ++col)
-                    if (sub_on(bx + col, by + r)) mask |= 1 << (r * 2 + col);
-            if (mask == 0) continue;
+                for (int col = 0; col < 2; ++col) {
+                    float cov = sub_cov(bx + col, by + r);
+                    any_max = std::max(any_max, cov);
+                    if (cov >= 0.5f) {              // this sub-pixel is “ink”
+                        mask |= 1 << (r * 2 + col);
+                        lit_sum += cov; ++lit_n;
+                    }
+                }
+            if (mask == 0) {
+                // No sub-pixel crossed 50%, but the cell may still be on a thin
+                // edge. Skip when truly empty so the sky shows through.
+                continue;
+            }
             Col bg = bg_fn(cx, cy);
-            p.glyph_cell(cx, cy, octant_glyph(mask), fg, bg);
+            // Anti-alias: fade the ink toward the backdrop by how fully the lit
+            // sub-pixels are covered. Solid interior → full ink; edge cells with
+            // partial coverage → ink melted into the sky, killing the hard
+            // staircase / dark-fringe artefacts.
+            float edge = lit_n ? (lit_sum / lit_n) : any_max;
+            float a = gfx::smoothstep(0.5f, 0.92f, edge);   // 0 at the soft edge
+            Col ink = gfx::mix(bg, fg, 0.35f + 0.65f * a);
+            p.glyph_cell(cx, cy, octant_glyph(mask), ink, bg);
         }
     }
     return pen / SX;

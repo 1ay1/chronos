@@ -27,7 +27,8 @@ public:
         Col ink    = night ? Col{0.92f,0.94f,1.0f} : Col{0.08f,0.10f,0.16f};
         Col accent = night ? Col{0.78f,0.86f,1.0f} : Col{1.0f,0.99f,0.94f};
         int ph = r.h * 2;
-        auto bg = [&](int, int cy) { return sky_scrim(sun_alt, cy, ph); };
+        auto bg     = [&](int, int cy) { return sky_scrim(sun_alt, cy, ph); };
+        auto skybg  = [&](int, int cy) { return sky_bg(sun_alt, cy, ph); };
 
         int x = r.x, y = r.y;
         if (size_ == 2) {  // compact single line
@@ -46,13 +47,22 @@ public:
         float bx = (float)r.x;
         float by = (float)r.y;     // cell-space top
 
-        float endx = font::draw_text(p, bx, by, em_q, hhmm, accent, bg, 0.115f);
+        // dark outline halo: draw the glyph once heavier in a translucent dark
+        // over the PLAIN sky, then the bright glyph thinner on top. The fatter
+        // dark pass peeks out as a clean 1px outline that makes the bright
+        // digits legible on a bright daytime sky — no rectangular scrim band,
+        // and the AA backdrop is the true sky so edges blend without fringing.
+        Col halo{0.05f, 0.06f, 0.12f};
+        font::draw_text(p, bx, by, em_q, hhmm, halo, skybg, 0.185f);
+        float endx = font::draw_text(p, bx, by, em_q, hhmm, accent, skybg, 0.125f);
 
         // seconds, smaller, vertically centred against the big digits.
         float secs_q = em_q * 0.38f;
         float secs_y = by + (em_q - secs_q) / 2.f / 4.f;   // (octant-rows → cell-rows)
         font::draw_text(p, endx + 0.5f, secs_y, secs_q,
-                        std::format("{:02}", c.lt.tm_sec), ink, bg, 0.14f);
+                        std::format("{:02}", c.lt.tm_sec), halo, skybg, 0.20f);
+        font::draw_text(p, endx + 0.5f, secs_y, secs_q,
+                        std::format("{:02}", c.lt.tm_sec), ink, skybg, 0.14f);
 
         int date_y = int(by + em_q / 4.f) + 1;
         date_line(p, x, date_y, c, WD, MON, ink, bg);

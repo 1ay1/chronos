@@ -280,4 +280,11 @@ inline Col sky_scrim(float sun_alt, int cell_y, int pix_h) {
     return gfx::mix(sky_palette(sun_alt, v), Col{0,0,0}, 0.40f);
 }
 
+// the plain sky colour behind a cell (no darkening) — used as the AA backdrop
+// for large glyphs that carry their own contrast via a drop shadow.
+inline Col sky_bg(float sun_alt, int cell_y, int pix_h) {
+    float v = 1.f - float(cell_y * 2 + 1) / float(pix_h);
+    return sky_palette(sun_alt, v);
+}
+
 } // namespace chronos::ui
