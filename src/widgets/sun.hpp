@@ -47,39 +47,64 @@ public:
         bool daytime = now_h >= st.sunrise_h && now_h <= st.sunset_h;
         float pc = std::clamp(prog, 0.f, 1.f);
 
-        // draw the dotted parabolic arc + a horizon line + the sun dot
         float sun_px = arc_x0 + pc * arc_w;
         float sun_py = base_y - std::sin(pc * 3.14159f) * (base_y - top_y);
-        Col arc_col   = gfx::mix(th.panel_border, th.warm, 0.4f);
-        Col sun_col   = daytime ? gfx::hex(0xffd479) : gfx::hex(0x6b76a8);
+        Col sun_col   = daytime ? gfx::hex(0xffd479) : gfx::hex(0x7681b4);
+        Col sky_lo = gfx::mix(th.panel_bg, gfx::hex(0x1b2540), 0.5f);   // arc fill tint
 
         auto shade = [&](float px, float py) -> Col {
-            // horizon
-            float hd = std::abs(py - base_y);
             Col col = th.panel_bg;
-            if (hd < 0.7f) col = gfx::mix(col, th.panel_border, 0.7f);
-            // arc curve: y as a function of x
             float t = (px - arc_x0) / std::max(1.f, (float)arc_w);
-            if (t >= 0 && t <= 1) {
-                float ay = base_y - std::sin(t * 3.14159f) * (base_y - top_y);
-                float dd = std::abs(py - ay);
-                if (dd < 0.9f) col = gfx::mix(col, arc_col, gfx::smoothstep(0.9f, 0.f, dd));
+            float ay = base_y - std::sin(std::clamp(t,0.f,1.f) * 3.14159f) * (base_y - top_y);
+
+            // soft daylight wash under the arc (sky gradient inside the dome)
+            if (t >= 0 && t <= 1 && py > ay && py < base_y) {
+                float depth = (py - ay) / std::max(1.f, base_y - ay);
+                Col wash = gfx::mix(gfx::scale(sun_col, 0.22f), sky_lo, depth);
+                col = gfx::mix(col, wash, 0.5f * (daytime ? 1.f : 0.4f));
             }
-            // sun dot + glow
-            float ds = std::hypot(px - sun_px, (py - sun_py) * 0.6f);
+            // horizon line
+            float hd = std::abs(py - base_y);
+            if (hd < 1.0f) col = gfx::mix(col, th.panel_border,
+                                          gfx::smoothstep(1.0f, 0.f, hd) * 0.85f);
+            // crisp arc curve (thin, AA)
+            if (t >= 0 && t <= 1) {
+                float dd = std::abs(py - ay);
+                Col arc_col = gfx::mix(th.panel_border, sun_col, 0.55f);
+                col = gfx::mix(col, arc_col, gfx::smoothstep(1.1f, 0.2f, dd));
+            }
+            // sun disc: limb-darkened core + radial glow
+            float ds = std::hypot(px - sun_px, (py - sun_py));
+            float R = 2.6f;
             if (daytime) {
-                col = gfx::add(col, gfx::scale(sun_col, gfx::smoothstep(6.f, 0.f, ds) * 0.5f));
-                col = gfx::mix(col, gfx::hex(0xfff4d6), gfx::smoothstep(2.0f, 1.0f, ds));
+                float glow = std::pow(gfx::smoothstep(R * 4.f, 0.f, ds), 1.5f) * 0.6f;
+                col = gfx::add(col, gfx::scale(gfx::hex(0xffcf6b), glow));
+                float disc = gfx::smoothstep(R + 0.7f, R - 0.7f, ds);
+                float limb = 1.f - 0.3f * gfx::smoothstep(0.f, R, ds);
+                col = gfx::mix(col, gfx::scale(gfx::hex(0xfff3cf), limb + 0.15f), disc);
             } else {
-                col = gfx::mix(col, sun_col, gfx::smoothstep(1.6f, 0.8f, ds));
+                float disc = gfx::smoothstep(R + 0.6f, R - 0.6f, ds);
+                col = gfx::add(col, gfx::scale(sun_col,
+                               gfx::smoothstep(R * 2.5f, 0.f, ds) * 0.3f));
+                col = gfx::mix(col, sun_col, disc);
             }
             return col;
         };
 
+        // supersample horizontally so the arc + disc read crisp, not blurry.
+        constexpr int SSx = 4;
+        auto srow = [&](float xl, float sub_y) {
+            Col a{0,0,0};
+            for (int s = 0; s < SSx; ++s) {
+                Col c0 = shade(xl + (s + 0.5f) / SSx, sub_y);
+                a.r += c0.r; a.g += c0.g; a.b += c0.b;
+            }
+            return gfx::scale(a, 1.f / SSx);
+        };
         for (int cy = in.y + 1; cy < in.bottom() - 2; ++cy)
             for (int cx = in.x; cx < in.right(); ++cx)
-                p.cell(cx, cy, shade(cx + 0.5f, cy * 2 + 0.f),
-                               shade(cx + 0.5f, cy * 2 + 1.f));
+                p.cell(cx, cy, srow(float(cx), cy * 2 + 0.5f),
+                               srow(float(cx), cy * 2 + 1.5f));
 
         // endpoint labels just above the horizon line
         int label_y = in.bottom() - 3;

@@ -110,11 +110,14 @@ inline Glyph make(char32_t cp) {
         std::vector<Pt> tail; arc(tail, M, C-0.02f, rx, qy*1.12f, -PI*0.5f, PI*0.04f, 16);
         g.strokes = { o, tail };
         break; }
-    case U':':
-        g.adv = 0.30f;
-        g.strokes = { { {M,T+qy*0.65f},{M,T+qy*0.65f+0.001f} },
-                      { {M,B-qy*0.65f},{M,B-qy*0.65f+0.001f} } };
-        break;
+    case U':': {
+        g.adv = 0.32f;
+        // dots centred on the glyph's OWN advance box (cx = adv/2), not the
+        // digit centre M=0.5 which sits outside a 0.32-wide box and vanished.
+        float cx = g.adv * 0.5f;
+        g.strokes = { { {cx, T+qy*0.55f}, {cx, T+qy*0.55f+0.06f} },
+                      { {cx, B-qy*0.55f-0.06f}, {cx, B-qy*0.55f} } };
+        break; }
     case U'.':
         g.adv = 0.28f;
         g.strokes = { { {M,B-0.04f},{M,B-0.039f} } };
@@ -264,7 +267,7 @@ inline float draw_text(gfx::Painter& p, float px, float py, float height_px,
         for (int sj = 0; sj < 3; ++sj)
             for (int si = 0; si < 3; ++si) {
                 float d = dist(sx + (si + 0.5f) / 3.f, sy + (sj + 0.5f) / 3.f);
-                acc += gfx::smoothstep(half + 0.6f, half - 0.6f, d);
+                acc += gfx::smoothstep(half + 0.85f, half - 0.85f, d);
             }
         return acc * (1.f / 9.f);
     };
@@ -273,32 +276,34 @@ inline float draw_text(gfx::Painter& p, float px, float py, float height_px,
         for (int cx = cx0; cx <= cx1; ++cx) {
             float bx = cx * SX, by = cy * SY;
             // 8 octant sub-pixels: bit = r*2 + c  (r 0..3 top→bottom, c 0..1)
-            int mask = 0;
-            float lit_sum = 0.f;   // coverage of the sub-pixels we light
-            int   lit_n   = 0;
-            float any_max = 0.f;
+            int   mask = 0;
+            float cell_cov = 0.f;   // mean analog coverage over all 8 sub-px
+            float max_cov  = 0.f;
+            float covs[8];
             for (int r = 0; r < 4; ++r)
                 for (int col = 0; col < 2; ++col) {
                     float cov = sub_cov(bx + col, by + r);
-                    any_max = std::max(any_max, cov);
-                    if (cov >= 0.5f) {              // this sub-pixel is “ink”
-                        mask |= 1 << (r * 2 + col);
-                        lit_sum += cov; ++lit_n;
-                    }
+                    covs[r * 2 + col] = cov;
+                    cell_cov += cov;
+                    max_cov = std::max(max_cov, cov);
                 }
-            if (mask == 0) {
-                // No sub-pixel crossed 50%, but the cell may still be on a thin
-                // edge. Skip when truly empty so the sky shows through.
-                continue;
-            }
+            cell_cov *= (1.f / 8.f);
+            // Pick the block shape from the sub-pixels above a LOW threshold so
+            // a thin stroke clipping a cell still lights its quadrant (better
+            // shape) — the staircase is then dissolved by the analog ink fade.
+            for (int i = 0; i < 8; ++i)
+                if (covs[i] >= 0.35f) mask |= 1 << i;
+            if (mask == 0) continue;             // truly empty — sky shows through
+
             Col bg = bg_fn(cx, cy);
-            // Anti-alias: fade the ink toward the backdrop by how fully the lit
-            // sub-pixels are covered. Solid interior → full ink; edge cells with
-            // partial coverage → ink melted into the sky, killing the hard
-            // staircase / dark-fringe artefacts.
-            float edge = lit_n ? (lit_sum / lit_n) : any_max;
-            float a = gfx::smoothstep(0.5f, 0.92f, edge);   // 0 at the soft edge
-            Col ink = gfx::mix(bg, fg, 0.35f + 0.65f * a);
+            // True coverage AA: a fully-interior cell (cell_cov~1) gets solid
+            // ink; an edge cell that's only ~30% covered melts most of the way
+            // back to the sky. Using the MEAN cell coverage (not just the lit
+            // sub-pixels) is what kills the blocky staircase — partial cells
+            // read as smooth grey ramps, like real sub-pixel antialiasing.
+            float fill = std::max(cell_cov, max_cov * 0.6f);
+            float a = gfx::smoothstep(0.10f, 0.85f, fill);
+            Col ink = gfx::mix(bg, fg, 0.18f + 0.82f * a);
             p.glyph_cell(cx, cy, octant_glyph(mask), ink, bg);
         }
     }

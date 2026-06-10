@@ -115,10 +115,10 @@ public:
             moon_->paint(p, {side + sun_w + gap, card_y, moon_w, card_h}, c);
         }
 
-        // centered modal overlays
+        // full-screen calendar overlay
         if (show_calendar_) {
-            int pw = 26, ph = 12;
-            calendar_->paint(p, {(W - pw) / 2, (H - ph) / 2, pw, ph}, c);
+            calendar_->paint(p, full, c);
+            return;   // calendar owns the whole screen (incl. its own footer)
         }
         if (show_clocks_) {
             int rows = (int)chronos::timeutil::default_zones().size() + 4;

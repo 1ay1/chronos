@@ -47,22 +47,27 @@ public:
         float bx = (float)r.x;
         float by = (float)r.y;     // cell-space top
 
-        // dark outline halo: draw the glyph once heavier in a translucent dark
-        // over the PLAIN sky, then the bright glyph thinner on top. The fatter
-        // dark pass peeks out as a clean 1px outline that makes the bright
-        // digits legible on a bright daytime sky — no rectangular scrim band,
-        // and the AA backdrop is the true sky so edges blend without fringing.
-        Col halo{0.05f, 0.06f, 0.12f};
-        font::draw_text(p, bx, by, em_q, hhmm, halo, skybg, 0.185f);
-        float endx = font::draw_text(p, bx, by, em_q, hhmm, accent, skybg, 0.125f);
+        // Clean legibility on ANY sky = a SYMMETRIC dark contour around the
+        // glyph, not a directional drop shadow (which leaves an ugly dark
+        // fringe on one side). Draw the dark contour HEAVIER so it peeks out
+        // evenly all the way around, then the bright body thinner on top. Both
+        // passes AA against the true sky, so the contour blends to nothing at
+        // its outer edge — a soft even glow, no blocky offset shadow.
+        Col contour{0.03f, 0.04f, 0.09f};
+        Col sheen = gfx::add(accent, Col{0.05f, 0.05f, 0.07f});
+        font::draw_text(p, bx, by, em_q, hhmm, contour, skybg, 0.225f);
+        font::draw_text(p, bx, by, em_q, hhmm, accent,  skybg, 0.150f);
+        font::draw_text(p, bx, by, em_q, hhmm, sheen,   skybg, 0.090f);
+        // draw_text advances in sub-x units (2 per cell); convert to cells /2.
+        float endx = bx + font::measure_em(hhmm) * em_q / 2.f;
 
-        // seconds, smaller, vertically centred against the big digits.
-        float secs_q = em_q * 0.38f;
-        float secs_y = by + (em_q - secs_q) / 2.f / 4.f;   // (octant-rows → cell-rows)
-        font::draw_text(p, endx + 0.5f, secs_y, secs_q,
-                        std::format("{:02}", c.lt.tm_sec), halo, skybg, 0.20f);
-        font::draw_text(p, endx + 0.5f, secs_y, secs_q,
-                        std::format("{:02}", c.lt.tm_sec), ink, skybg, 0.14f);
+        // seconds, smaller, sitting AFTER the minutes and baseline-aligned to
+        // the bottom of the big digits (superscript style).
+        float secs_q = em_q * 0.40f;
+        float secs_y = by + (em_q - secs_q) / 4.f;   // (octant-rows → cell-rows)
+        std::string ss = std::format("{:02}", c.lt.tm_sec);
+        font::draw_text(p, endx + 1.0f, secs_y, secs_q, ss, contour, skybg, 0.22f);
+        font::draw_text(p, endx + 1.0f, secs_y, secs_q, ss, accent,  skybg, 0.135f);
 
         int date_y = int(by + em_q / 4.f) + 1;
         date_line(p, x, date_y, c, WD, MON, ink, bg);
@@ -73,9 +78,19 @@ private:
     void date_line(Painter& p, int x, int y, const Ctx& c,
                    const char* const* WD, const char* const* MON,
                    Col ink, BgFn&& bg) {
-        p.text_over(x, y, std::format("{} \u00b7 {} {}, {}",
+        // A light, sky-tinted scrim (not a hard 40% black band) keeps the date
+        // readable without looking like a solid box under the digits.
+        float sun_alt = (float)c.sun.altitude;
+        auto soft = [&](int cx, int cy) {
+            (void)cx;
+            Col s = sky_bg(sun_alt, cy, p.rows() * 2);
+            return gfx::mix(s, Col{0,0,0}, 0.12f);
+        };
+        std::string d = std::format("{}  \u00b7  {} {}, {}",
             WD[c.lt.tm_wday % 7], MON[c.lt.tm_mon + 1], c.lt.tm_mday,
-            c.lt.tm_year + 1900), ink, bg, true);
+            c.lt.tm_year + 1900);
+        p.text_over(x + 1, y, d, ink, soft, true);
+        (void)bg;
     }
     int size_ = 0;   // 0 huge, 1 big, 2 compact
 };
