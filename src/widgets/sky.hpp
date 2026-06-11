@@ -186,24 +186,37 @@ public:
             return gfx::mix(c0, graded, golden);
         };
 
-        // ordered (Bayer-ish) dither: a tiny per-pixel value offset added before
-        // the posterize step. With a coarse posterize (e.g. 7 levels) a strong
-        // dither is needed to break the banding — but that stipple only
-        // "resolves" into a smooth gradient on a display that blends adjacent
-        // cells. On a crisp / high-DPI terminal it instead shows as salt-and-
-        // pepper SPECKLE all over the sky. Since we now posterize finely (20
-        // levels) the bands are already small, so we keep only a very gentle
-        // dither (a fraction of a band) to soften residual contours without
-        // producing visible noise.
+        // We posterize at exactly the renderer's own colour depth (32 levels/
+        // channel — see gfx::Painter::q), so chronos throws away NO colour
+        // resolution: every band the terminal can possibly show, it shows. At
+        // that fineness the gradient is already near-continuous; the remaining
+        // job is to dissolve the last 1-LSB contour lines WITHOUT introducing
+        // crisp salt-and-pepper speckle on terminals that render cells sharply.
+        //
+        // Triangular-PDF (TPDF) dither does exactly that: two independent
+        // hashed uniforms summed give a triangular distribution that decorrelates
+        // the quantization error so a band edge dissolves into a soft, even
+        // stipple rather than a hard line — and at ±1 LSB amplitude it's below
+        // the visual threshold on a crisp display. A per-channel hash (not a
+        // shared Bayer cell) avoids the regular grid pattern that reads as a
+        // texture. Sub-pixel coords key it so top/bottom of a cell differ.
         auto dither = [&](Col c0, float px, float py, float levels) -> Col {
-            // 4x4 Bayer matrix value in 0..1, centered to -0.5..0.5
-            static const int B[16] = { 0, 8, 2,10, 12, 4,14, 6,
-                                       3,11, 1, 9, 15, 7,13, 5 };
-            int bx = ((int)px) & 3, by = ((int)py) & 3;
-            float d = (B[by * 4 + bx] / 16.f) - 0.5f;
-            float amp = (1.f / levels) * 0.35f;   // gentle — no visible stipple
-            return { c0.r + d * amp, c0.g + d * amp, c0.b + d * amp };
+            auto tri = [&](float a, float b) -> float {
+                // two uniforms in [0,1) → triangular in [-1,1), zero mean
+                float u = gfx::hash2(a, b);
+                float v = gfx::hash2(b * 1.7f + 4.3f, a * 2.1f + 1.9f);
+                return u - v;
+            };
+            float amp = (1.f / levels) * 0.9f;    // ~±1 LSB of the 32-level grid
+            float dr = tri(px * 1.3f, py * 2.7f) * amp;
+            float dg = tri(px * 2.9f + 7.f, py * 1.1f + 3.f) * amp;
+            float db = tri(px * 1.9f + 13.f, py * 3.3f + 9.f) * amp;
+            return { c0.r + dr, c0.g + dg, c0.b + db };
         };
+        // shared posterize level — matches the renderer's 32-step quantizer so
+        // no colour depth is wasted. Bump together with gfx::Painter::q if that
+        // ever changes.
+        constexpr float SKY_LEVELS = 32.f;
 
         auto shade = [&](float px, float py) -> Col {
             float vv = 1.f - py / float(PH);
@@ -609,7 +622,7 @@ public:
                 }
                 if (flash > 0.001f)
                     col = gfx::add(col, gfx::scale(Col{0.55f,0.62f,0.85f}, flash * 0.9f));
-                return gfx::posterize(dither(gfx::saturate(grade(col), 1.25f), px, py, 20.f), 20.f);
+                return gfx::posterize(dither(gfx::saturate(grade(col), 1.25f), px, py, SKY_LEVELS), SKY_LEVELS);
             }
             // ground — layered rolling hills with atmospheric depth.
             // Sky colour at the horizon, used to tint distant ridges (haze).
@@ -663,7 +676,7 @@ public:
                 // storm/flash also touch the water so it stays consistent
                 if (vz.storm > 0.01f) water = gfx::mix(water, gfx::scale(water,0.5f), vz.storm);
                 if (flash > 0.001f)   water = gfx::add(water, gfx::scale(Col{0.5f,0.57f,0.8f}, flash*0.7f));
-                return gfx::posterize(dither(gfx::saturate(grade(water), 1.25f), px, py, 20.f), 20.f);
+                return gfx::posterize(dither(gfx::saturate(grade(water), 1.25f), px, py, SKY_LEVELS), SKY_LEVELS);
             }
 
             // Three ridges: far (hazy, high) → near (saturated, low). Day greens
@@ -739,14 +752,11 @@ public:
             // cards read, without crushing the foreground meadow to flat black.
             float foot = gfx::smoothstep(PH * 0.90f, float(PH), py);
             col = gfx::scale(col, 1.f - foot * 0.30f);
-            // Quantize the finished pixel. 7 bands read as hard, posterized
-            // "pixel-art" steps that the ordered dither only partly dissolves —
-            // on high-DPI / mobile terminals the stipple is too fine to blend
-            // and you just see coarse banding. 20 levels (still well under the
-            // renderer's 32-level cell quantization) gives a smooth, continuous
-            // gradient while the dither cleans up the remaining contours.
-            constexpr float LEVELS = 20.f;
-            return gfx::posterize(dither(gfx::saturate(grade(col), 1.35f), px, py, LEVELS), LEVELS);
+            // Quantize the finished pixel at the renderer's full 32-level
+            // colour depth (SKY_LEVELS), so the ground gradient is as smooth as
+            // the terminal can render; the triangular dither dissolves the last
+            // contour lines without crisp speckle.
+            return gfx::posterize(dither(gfx::saturate(grade(col), 1.35f), px, py, SKY_LEVELS), SKY_LEVELS);
         };
 
         // High-res render: each emitted sub-pixel is the average of several
