@@ -187,19 +187,21 @@ public:
         };
 
         // ordered (Bayer-ish) dither: a tiny per-pixel value offset added before
-        // the posterize step. Posterizing to ~8 levels otherwise bands the
-        // smooth sky gradient into visible stripes; nudging each pixel by a
-        // fraction of a band breaks those edges into a fine stipple that the eye
-        // integrates back into a continuous, "HD" gradient. Amplitude is one
-        // posterize step so it never shifts the colour perceptibly, just
-        // dissolves the contour line.
+        // the posterize step. With a coarse posterize (e.g. 7 levels) a strong
+        // dither is needed to break the banding — but that stipple only
+        // "resolves" into a smooth gradient on a display that blends adjacent
+        // cells. On a crisp / high-DPI terminal it instead shows as salt-and-
+        // pepper SPECKLE all over the sky. Since we now posterize finely (20
+        // levels) the bands are already small, so we keep only a very gentle
+        // dither (a fraction of a band) to soften residual contours without
+        // producing visible noise.
         auto dither = [&](Col c0, float px, float py, float levels) -> Col {
             // 4x4 Bayer matrix value in 0..1, centered to -0.5..0.5
             static const int B[16] = { 0, 8, 2,10, 12, 4,14, 6,
                                        3,11, 1, 9, 15, 7,13, 5 };
             int bx = ((int)px) & 3, by = ((int)py) & 3;
             float d = (B[by * 4 + bx] / 16.f) - 0.5f;
-            float amp = (1.f / levels) * 0.9f;
+            float amp = (1.f / levels) * 0.35f;   // gentle — no visible stipple
             return { c0.r + d * amp, c0.g + d * amp, c0.b + d * amp };
         };
 
@@ -607,7 +609,7 @@ public:
                 }
                 if (flash > 0.001f)
                     col = gfx::add(col, gfx::scale(Col{0.55f,0.62f,0.85f}, flash * 0.9f));
-                return gfx::posterize(dither(gfx::saturate(grade(col), 1.25f), px, py, 8.f), 8.f);
+                return gfx::posterize(dither(gfx::saturate(grade(col), 1.25f), px, py, 20.f), 20.f);
             }
             // ground — layered rolling hills with atmospheric depth.
             // Sky colour at the horizon, used to tint distant ridges (haze).
@@ -661,7 +663,7 @@ public:
                 // storm/flash also touch the water so it stays consistent
                 if (vz.storm > 0.01f) water = gfx::mix(water, gfx::scale(water,0.5f), vz.storm);
                 if (flash > 0.001f)   water = gfx::add(water, gfx::scale(Col{0.5f,0.57f,0.8f}, flash*0.7f));
-                return gfx::posterize(dither(gfx::saturate(grade(water), 1.25f), px, py, 8.f), 8.f);
+                return gfx::posterize(dither(gfx::saturate(grade(water), 1.25f), px, py, 20.f), 20.f);
             }
 
             // Three ridges: far (hazy, high) → near (saturated, low). Day greens
