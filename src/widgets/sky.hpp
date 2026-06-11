@@ -737,7 +737,14 @@ public:
             // cards read, without crushing the foreground meadow to flat black.
             float foot = gfx::smoothstep(PH * 0.90f, float(PH), py);
             col = gfx::scale(col, 1.f - foot * 0.30f);
-            return gfx::posterize(dither(gfx::saturate(grade(col), 1.35f), px, py, 7.f), 7.f);
+            // Quantize the finished pixel. 7 bands read as hard, posterized
+            // "pixel-art" steps that the ordered dither only partly dissolves —
+            // on high-DPI / mobile terminals the stipple is too fine to blend
+            // and you just see coarse banding. 20 levels (still well under the
+            // renderer's 32-level cell quantization) gives a smooth, continuous
+            // gradient while the dither cleans up the remaining contours.
+            constexpr float LEVELS = 20.f;
+            return gfx::posterize(dither(gfx::saturate(grade(col), 1.35f), px, py, LEVELS), LEVELS);
         };
 
         // High-res render: each emitted sub-pixel is the average of several
