@@ -258,10 +258,25 @@ public:
             float db = tri(px * 1.9f + 13.f, py * 3.3f + 9.f) * amp;
             return { c0.r + dr, c0.g + dg, c0.b + db };
         };
-        // shared posterize level — matches the renderer's 32-step quantizer so
-        // no colour depth is wasted. Bump together with gfx::Painter::q if that
-        // ever changes.
-        constexpr float SKY_LEVELS = 32.f;
+        // shared posterize level — normally the renderer's full 32-step depth.
+        // ADAPTIVE: maya's StylePool holds at most 65535 unique styles and never
+        // evicts; once it saturates, intern() returns the DEFAULT style and the
+        // whole sky corrupts to terminal-default stripes for the rest of the
+        // session (seen after long time-warps sweeping the entire day palette).
+        // So as the pool fills we coarsen the sky's quantization — fewer levels
+        // = colours collapse onto already-interned styles = growth stops. The
+        // visual cost (slightly chunkier bands) is invisible next to the
+        // alternative. Hysteresis: levels only step DOWN, never back up within
+        // a session, so the picture doesn't pump between depths.
+        {
+            size_t used = p.style_count();
+            float want = levels_;
+            if      (used > 52000) want = 8.f;
+            else if (used > 40000) want = 12.f;
+            else if (used > 26000) want = 16.f;
+            if (want < levels_) { levels_ = want; dirty_ = true; }
+        }
+        const float SKY_LEVELS = levels_;
 
         auto shade = [&](float px, float py) -> Col {
             float vv = 1.f - py / float(PH);
@@ -1013,6 +1028,7 @@ private:
     float frozen_anim_ = 0.f;  // scenery anim clock, held still while warping
     float shaded_cloud_ = -1.f, shaded_storm_ = -1.f;  // last values baked into cache_
     float shaded_sunalt_ = -999.f;                     // sun altitude baked into cache_
+    float levels_ = 32.f;      // adaptive posterize depth (steps down as pool fills)
 };
 
 // helper other widgets use to scrim text legibly over the sky

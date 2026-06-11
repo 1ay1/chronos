@@ -101,6 +101,26 @@ public:
 
     void paint(Canvas& cv, int W, int H) {
         if (!pool_ || W < 24 || H < 10) return;
+        // StylePool backstop: maya's pool caps at 65535 unique styles and never
+        // evicts — at saturation every new style collapses to terminal-default
+        // and the screen corrupts irreversibly (full-day warps sweep enough
+        // palette to get there). chronos repaints EVERY cell EVERY frame (the
+        // sky blits the whole grid, widgets paint over it), so resetting the
+        // pool between frames is safe: all cells re-intern fresh ids this very
+        // frame. Cost: one full wire re-emit on the next diff. The sky's
+        // adaptive quantization makes this rare; this is the hard guarantee.
+        if (pool_->size() > 58000) {
+            pool_->clear();
+            // Salt: shift id assignment by a varying amount each clear, so an
+            // old cell's (char, id) can't coincidentally equal the new frame's
+            // (char, id) with a DIFFERENT colour — packed-equal cells are
+            // skipped by maya's diff and would display stale colours forever.
+            int salt = (++pool_clears_ % 7) + 1;
+            for (int i = 0; i < salt; ++i)
+                (void)pool_->intern(maya::Style{}.with_fg(
+                    maya::Color::rgb(uint8_t(i * 31 + 1), uint8_t(i * 17 + 3), 0)));
+            sky_->invalidate();
+        }
         chronos::gfx::Painter p(cv, *pool_, W, H);
 
         // ── build per-frame context ────────────────────────────────────────
@@ -187,6 +207,7 @@ private:
     StylePool* pool_ = nullptr;
     ui::Theme  theme_;
     double lat_ = 51.5074, lon_ = -0.1278;
+    int    pool_clears_ = 0;   // style-pool resets this session (salts id shift)
     std::string place_ = "London";
     bool   have_lat_ = false, have_lon_ = false, have_place_ = false;  // pinned via env
     double time_warp_ = 0, warp_rate_ = 0;

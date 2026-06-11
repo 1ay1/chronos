@@ -112,6 +112,15 @@ public:
     [[nodiscard]] int pix_w()    const { return w_; }      // sub-pixel width
     [[nodiscard]] int pix_h()    const { return h_ * 2; }  // sub-pixel height
 
+    // style-pool occupancy: maya's StylePool caps at 65535 unique styles and
+    // NEVER evicts — at saturation intern() collapses to the default style and
+    // the whole screen corrupts to terminal-default colours for the rest of
+    // the session. Long-running palette sweeps (time-warp through a full day)
+    // can accumulate tens of thousands of unique (fg,bg) pairs, so heavy
+    // colour producers (the sky) poll this and coarsen their quantization
+    // before the cliff.
+    [[nodiscard]] size_t style_count() const { return pool_.size(); }
+
     // -- style interning (quantized so the pool stays small) -----------------
     uint16_t cell_style(Col top, Col bot) {
         return pool_.intern(maya::Style{}
