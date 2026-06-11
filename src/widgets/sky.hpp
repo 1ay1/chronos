@@ -231,52 +231,25 @@ public:
             return gfx::mix(c0, graded, golden);
         };
 
-        // We posterize at exactly the renderer's own colour depth (32 levels/
-        // channel — see gfx::Painter::q), so chronos throws away NO colour
-        // resolution: every band the terminal can possibly show, it shows. At
-        // that fineness the gradient is already near-continuous; the remaining
-        // job is to dissolve the last 1-LSB contour lines WITHOUT introducing
-        // crisp salt-and-pepper speckle on terminals that render cells sharply.
+        // NO dither. Dither dissolves band edges into per-pixel speckle, which
+        // on a crisp terminal reads as confetti static smeared over the whole
+        // scene (user-rejected). Instead we posterize HARD — few, flat, clean
+        // colour bands with razor edges: the Minecraft / pixel-art look. Bands
+        // are a feature, not an artifact.
         //
-        // Triangular-PDF (TPDF) dither does exactly that: two independent
-        // hashed uniforms summed give a triangular distribution that decorrelates
-        // the quantization error so a band edge dissolves into a soft, even
-        // stipple rather than a hard line — and at ±1 LSB amplitude it's below
-        // the visual threshold on a crisp display. A per-channel hash (not a
-        // shared Bayer cell) avoids the regular grid pattern that reads as a
-        // texture. Sub-pixel coords key it so top/bottom of a cell differ.
-        auto dither = [&](Col c0, float px, float py, float levels) -> Col {
-            auto tri = [&](float a, float b) -> float {
-                // two uniforms in [0,1) → triangular in [-1,1), zero mean
-                float u = gfx::hash2(a, b);
-                float v = gfx::hash2(b * 1.7f + 4.3f, a * 2.1f + 1.9f);
-                return u - v;
-            };
-            float amp = (1.f / levels) * 0.9f;    // ~±1 LSB of the 32-level grid
-            float dr = tri(px * 1.3f, py * 2.7f) * amp;
-            float dg = tri(px * 2.9f + 7.f, py * 1.1f + 3.f) * amp;
-            float db = tri(px * 1.9f + 13.f, py * 3.3f + 9.f) * amp;
-            return { c0.r + dr, c0.g + dg, c0.b + db };
-        };
-        // shared posterize level — normally the renderer's full 32-step depth.
-        // ADAPTIVE: maya's StylePool holds at most 65535 unique styles and never
-        // evicts; once it saturates, intern() returns the DEFAULT style and the
-        // whole sky corrupts to terminal-default stripes for the rest of the
-        // session (seen after long time-warps sweeping the entire day palette).
-        // So as the pool fills we coarsen the sky's quantization — fewer levels
-        // = colours collapse onto already-interned styles = growth stops. The
-        // visual cost (slightly chunkier bands) is invisible next to the
-        // alternative. Hysteresis: levels only step DOWN, never back up within
-        // a session, so the picture doesn't pump between depths.
+        // ADAPTIVE pool guard kept: maya's StylePool caps at 65535 styles and
+        // never evicts; at saturation the screen corrupts to default-styled
+        // stripes. At 8 levels the palette is tiny so the thresholds below are
+        // effectively unreachable — they remain as a hard backstop only.
         {
             size_t used = p.style_count();
             float want = levels_;
-            if      (used > 52000) want = 8.f;
-            else if (used > 40000) want = 12.f;
-            else if (used > 26000) want = 16.f;
+            if      (used > 52000) want = 5.f;
+            else if (used > 40000) want = 6.f;
             if (want < levels_) { levels_ = want; dirty_ = true; }
         }
-        const float SKY_LEVELS = levels_;
+        const float SKY_LEVELS = levels_;          // sky + water bands
+        const float GND_LEVELS = std::max(4.f, levels_ - 1.f);  // ground slightly coarser
 
         auto shade = [&](float px, float py) -> Col {
             float vv = 1.f - py / float(PH);
@@ -682,7 +655,7 @@ public:
                 }
                 if (flash > 0.001f)
                     col = gfx::add(col, gfx::scale(Col{0.55f,0.62f,0.85f}, flash * 0.9f));
-                return gfx::posterize(dither(gfx::saturate(grade(col), 1.25f), px, py, SKY_LEVELS), SKY_LEVELS);
+                return gfx::posterize(gfx::saturate(grade(col), 1.25f), SKY_LEVELS);
             }
             // ground — layered rolling hills with atmospheric depth.
             // Sky colour at the horizon, used to tint distant ridges (haze).
@@ -736,7 +709,7 @@ public:
                 // storm/flash also touch the water so it stays consistent
                 if (vz.storm > 0.01f) water = gfx::mix(water, gfx::scale(water,0.5f), vz.storm);
                 if (flash > 0.001f)   water = gfx::add(water, gfx::scale(Col{0.5f,0.57f,0.8f}, flash*0.7f));
-                return gfx::posterize(dither(gfx::saturate(grade(water), 1.25f), px, py, SKY_LEVELS), SKY_LEVELS);
+                return gfx::posterize(gfx::saturate(grade(water), 1.25f), SKY_LEVELS);
             }
 
             // Three ridges: far (hazy, high) → near (saturated, low). Day greens
@@ -812,11 +785,8 @@ public:
             // cards read, without crushing the foreground meadow to flat black.
             float foot = gfx::smoothstep(PH * 0.90f, float(PH), py);
             col = gfx::scale(col, 1.f - foot * 0.30f);
-            // Quantize the finished pixel at the renderer's full 32-level
-            // colour depth (SKY_LEVELS), so the ground gradient is as smooth as
-            // the terminal can render; the triangular dither dissolves the last
-            // contour lines without crisp speckle.
-            return gfx::posterize(dither(gfx::saturate(grade(col), 1.35f), px, py, SKY_LEVELS), SKY_LEVELS);
+            // Hard posterize — few flat bands, razor edges (pixel-art ground).
+            return gfx::posterize(gfx::saturate(grade(col), 1.35f), GND_LEVELS);
         };
 
         // High-res render: each emitted sub-pixel is the average of several
@@ -1028,7 +998,7 @@ private:
     float frozen_anim_ = 0.f;  // scenery anim clock, held still while warping
     float shaded_cloud_ = -1.f, shaded_storm_ = -1.f;  // last values baked into cache_
     float shaded_sunalt_ = -999.f;                     // sun altitude baked into cache_
-    float levels_ = 32.f;      // adaptive posterize depth (steps down as pool fills)
+    float levels_ = 8.f;       // posterize depth: few flat bands = pixel-art look
 };
 
 // helper other widgets use to scrim text legibly over the sky
