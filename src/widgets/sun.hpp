@@ -66,12 +66,12 @@ public:
             // horizon line
             float hd = std::abs(py - base_y);
             if (hd < 1.0f) col = gfx::mix(col, th.panel_border,
-                                          gfx::smoothstep(0.8f, 0.f, hd) * 0.9f);
+                                          gfx::smoothstep(0.65f, 0.f, hd) * 0.9f);
             // crisp arc curve (thin, AA against the fine supersample grid)
             if (t >= 0 && t <= 1) {
                 float dd = std::abs(py - ay);
                 Col arc_col = gfx::mix(th.panel_border, sun_col, 0.55f);
-                col = gfx::mix(col, arc_col, gfx::smoothstep(0.85f, 0.1f, dd));
+                col = gfx::mix(col, arc_col, gfx::smoothstep(0.7f, 0.08f, dd));
             }
             // sun disc: limb-darkened core + radial glow, crisp edge
             float ds = std::hypot(px - sun_px, (py - sun_py));
@@ -79,11 +79,11 @@ public:
             if (daytime) {
                 float glow = std::pow(gfx::smoothstep(R * 4.f, 0.f, ds), 1.5f) * 0.6f;
                 col = gfx::add(col, gfx::scale(gfx::hex(0xffcf6b), glow));
-                float disc = gfx::smoothstep(R + 0.35f, R - 0.35f, ds);
+                float disc = gfx::smoothstep(R + 0.22f, R - 0.22f, ds);
                 float limb = 1.f - 0.3f * gfx::smoothstep(0.f, R, ds);
                 col = gfx::mix(col, gfx::scale(gfx::hex(0xfff3cf), limb + 0.15f), disc);
             } else {
-                float disc = gfx::smoothstep(R + 0.35f, R - 0.35f, ds);
+                float disc = gfx::smoothstep(R + 0.22f, R - 0.22f, ds);
                 col = gfx::add(col, gfx::scale(sun_col,
                                gfx::smoothstep(R * 2.5f, 0.f, ds) * 0.3f));
                 col = gfx::mix(col, sun_col, disc);
@@ -91,11 +91,12 @@ public:
             return col;
         };
 
-        // High-resolution render: supersample BOTH axes so the arc curve and
-        // the sun disc read crisp and clean, not stair-stepped. Each emitted
-        // half-cell sub-pixel is the box-filtered average of SSx×SSy shader
-        // samples; the disc/arc are antialiased against that fine grid.
-        constexpr int SSx = 5, SSy = 3;
+        // High-resolution render: supersample BOTH axes heavily so the arc
+        // curve and the sun disc read perfectly smooth, not stair-stepped. The
+        // panel is only a handful of cells, so a dense 8×6 box filter (48
+        // shader samples per emitted half-cell) is cheap yet gives near-vector
+        // quality — sub-pixel disc/arc edges resolve as clean gradients.
+        constexpr int SSx = 8, SSy = 6;
         auto srow = [&](float xl, float sub_y_center) {
             Col a{0,0,0};
             for (int sy = 0; sy < SSy; ++sy) {
