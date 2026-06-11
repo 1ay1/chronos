@@ -41,6 +41,13 @@ public:
         const char* label = chronos::weather::code_label(w.code);
         Col tcol = temp_color(th, w.temp_c);
 
+        // title-bar badge: day/night marker on the right of the header
+        if (!(w.valid && w.stale)) {
+            const char* dn = w.is_day ? "☀ day" : "☾ night";
+            Col dnc = w.is_day ? th.warm : gfx::mix(th.cool, th.text_dim, 0.3f);
+            p.text(in.right() - (int)gfx::utf8_cols(dn), in.y, dn, dnc, th.panel_bg);
+        }
+
         // Split the card into a left column (big condition + temperature) and a
         // right column (stat rows). The divider sits at a fixed fraction so the
         // two blocks never overprint, with a 1-col gutter each side. On a very
@@ -50,14 +57,19 @@ public:
         bool two_col = (in.right() - 1) - (split + 1) >= 12;
         int gy = in.y + 2;
 
-        // glyph + big temperature on the headline row
-        std::string temp = std::format("{:.0f}\u00b0", w.temp_c);
+        // glyph + big temperature on the headline row, with a thin temp-tinted
+        // accent rule to the left so the headline reads as a coloured block.
+        std::string temp = std::format("{:.0f}°", w.temp_c);
         p.text(lx, gy, glyph, tcol, th.panel_bg, true);
         p.text(lx + 2, gy, temp, tcol, th.panel_bg, true);
         // condition label + feels-like stacked beneath, clipped to the column
         int lwid = (two_col ? split : in.right() - 1) - lx;
         p.text(lx, gy + 1, clip(label, lwid), th.text, th.panel_bg);
-        p.text(lx, gy + 2, clip(std::format("feels {:.0f}\u00b0", w.feels_c), lwid),
+        // feels-like with an up/down arrow vs. actual temperature
+        double fd = w.feels_c - w.temp_c;
+        const char* fa = fd > 0.7 ? "↑" : fd < -0.7 ? "↓" : "≈";
+        p.text(lx, gy + 2,
+               clip(std::format("feels {} {:.0f}°", fa, w.feels_c), lwid),
                th.text_dim, th.panel_bg);
 
         // ── right column: stat rows, label left / value right-aligned ───────
@@ -66,14 +78,18 @@ public:
             int rx = in.right() - 1;
             // a faint vertical divider between the columns
             for (int cy = gy; cy <= gy + 2; ++cy)
-                p.text(split, cy, "\u2502", gfx::scale(th.panel_border, 0.8f), th.panel_bg);
-            kv(p, th, sx, rx, gy + 0, "Hi/Lo",
-               std::format("{:.0f}\u00b0/{:.0f}\u00b0", w.hi_c, w.lo_c), th.warm);
-            kv(p, th, sx, rx, gy + 1, "Humid",
+                p.text(split, cy, "│", gfx::scale(th.panel_border, 0.8f), th.panel_bg);
+            kv(p, th, sx, rx, gy + 0, "↑↓ hi/lo",
+               std::format("{:.0f}°/{:.0f}°", w.hi_c, w.lo_c), th.warm);
+            kv(p, th, sx, rx, gy + 1, "○ humid",
                std::format("{}%", w.humidity), th.cool);
-            kv(p, th, sx, rx, gy + 2, "Wind",
+            kv(p, th, sx, rx, gy + 2, "≈ wind",
                std::format("{:.0f} {}", w.wind_kmh,
                            chronos::weather::wind_compass(w.wind_dir)), th.text);
+            // if the card is tall enough, add a humidity gauge below the stats
+            if (gy + 3 < in.bottom() - 1 && rx - sx >= 6)
+                p.gauge(sx, gy + 3, rx - sx + 1, w.humidity / 100.f,
+                        th.cool, gfx::scale(th.panel_border, 0.7f), th.panel_bg);
         } else {
             // too narrow for a side column: stack stats full-width below the
             // headline, but only as many as fit above the footer so nothing
@@ -84,9 +100,9 @@ public:
             auto stat = [&](const char* k, const std::string& v, Col vc) {
                 if (row <= last) { kv(p, th, lx, rx, row, k, v, vc); row++; }
             };
-            stat("Hi/Lo", std::format("{:.0f}\u00b0/{:.0f}\u00b0", w.hi_c, w.lo_c), th.warm);
-            stat("Humidity", std::format("{}%", w.humidity), th.cool);
-            stat("Wind", std::format("{:.0f} {}", w.wind_kmh,
+            stat("↑↓ hi/lo", std::format("{:.0f}°/{:.0f}°", w.hi_c, w.lo_c), th.warm);
+            stat("○ humidity", std::format("{}%", w.humidity), th.cool);
+            stat("≈ wind", std::format("{:.0f} {}", w.wind_kmh,
                           chronos::weather::wind_compass(w.wind_dir)), th.text);
         }
 

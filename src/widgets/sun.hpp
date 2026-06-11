@@ -2,9 +2,9 @@
 // chronos::ui::SunArcWidget — graphical sun path with sunrise/sunset markers.
 //
 // Draws the sun's daily arc as a parabola across the card; a glowing dot rides
-// the arc at the current time. Sunrise/sunset times anchor the ends, a
-// daylight-length readout sits below, and a progress gauge shows how far
-// through the daylight (or night) we are.
+// the arc at the current time. A graduated horizon with E/S/W compass ticks
+// anchors the scene, sunrise/sunset times sit at the ends, and a daylight
+// progress bar with a phase-of-day badge rounds out the card.
 
 #include "../widget.hpp"
 #include "sky.hpp"
@@ -38,14 +38,21 @@ public:
             return;
         }
 
-        // arc band geometry (in sub-pixels) inside the card
-        int arc_x0 = in.x, arc_w = in.w;
-        int top_y  = (in.y + 1) * 2;
-        int base_y = (in.bottom() - 3) * 2;
         float now_h = c.lt.tm_hour + c.lt.tm_min / 60.0f + c.lt.tm_sec / 3600.0f;
         float prog  = (now_h - (float)st.sunrise_h) / std::max(0.01f, (float)st.daylight_h);
         bool daytime = now_h >= st.sunrise_h && now_h <= st.sunset_h;
         float pc = std::clamp(prog, 0.f, 1.f);
+
+        // ── phase-of-day badge in the title bar ─────────────────────────────
+        // a small label that names where we are in the day, coloured to match.
+        auto [badge, badge_col] = day_phase(c, st, now_h, daytime, pc, th);
+        int bw = (int)gfx::utf8_cols(badge);
+        p.text(in.right() - bw, in.y, badge, badge_col, th.panel_bg, true);
+
+        // arc band geometry (in sub-pixels) inside the card
+        int arc_x0 = in.x, arc_w = in.w;
+        int top_y  = (in.y + 1) * 2;
+        int base_y = (in.bottom() - 3) * 2;
 
         float sun_px = arc_x0 + pc * arc_w;
         float sun_py = base_y - std::sin(pc * 3.14159f) * (base_y - top_y);
@@ -79,6 +86,12 @@ public:
                     float behind = (pc - t) / std::max(0.02f, pc);   // 0 at sun .. 1 at rise
                     float trail = gfx::smoothstep(1.1f, 0.f, dd) * (1.f - behind * 0.75f);
                     col = gfx::add(col, gfx::scale(gfx::hex(0xffb454), trail * 0.45f));
+                }
+                // faint dotted track ahead of the sun (the path still to come)
+                if (daytime && t > pc) {
+                    float ahead = gfx::smoothstep(0.9f, 0.f, dd);
+                    float dash  = 0.5f + 0.5f * std::sin(t * 64.f);   // dotted
+                    col = gfx::add(col, gfx::scale(sun_col, ahead * dash * 0.10f));
                 }
             }
             // sun disc: limb-darkened core + radial glow, crisp edge
@@ -126,20 +139,66 @@ public:
                                srow(float(cx), cy * 2 + 1.5f, base));
             }
 
-        // endpoint labels just above the horizon line
+        // ── compass ticks on the horizon: E (rise side) · S (noon) · W (set) ─
+        int horizon_cy = in.bottom() - 3;
+        struct Tick { float t; const char* lab; };
+        Tick ticks[] = {{0.f, "E"}, {0.5f, "S"}, {1.f, "W"}};
+        for (auto& tk : ticks) {
+            int tcx = arc_x0 + (int)std::round(tk.t * (arc_w - 1));
+            tcx = std::clamp(tcx, in.x, in.right() - 1);
+            Col tc = gfx::mix(th.text_dim, th.panel_border, 0.2f);
+            p.text(tcx, horizon_cy, tk.lab, tc, p.bg_at(tcx, horizon_cy, th.panel_bg));
+        }
+
+        // ── endpoint labels just above the horizon line ─────────────────────
         int label_y = in.bottom() - 3;
         p.text(in.x, label_y, "\u2191" + hm(st.sunrise_h), th.warm, th.panel_bg);
         std::string set = hm(st.sunset_h) + "\u2193";
         p.text(in.right() - (int)gfx::utf8_cols(set), label_y, set,
                gfx::hex(0xbb9af7), th.panel_bg);
 
-        // daylight readout + progress gauge at the bottom
+        // ── footer: daylight progress bar + readouts ────────────────────────
         int dh = (int)st.daylight_h, dm = (int)std::round((st.daylight_h - dh) * 60);
-        p.text(in.x, in.bottom() - 1,
-               std::format("{}h{:02}m daylight", dh, dm), th.text_dim, th.panel_bg);
+        int foot = in.bottom() - 1;
+
+        // left: daylight length; right: live altitude
+        std::string len = std::format("{}h{:02}m", dh, dm);
         std::string alts = std::format("{:+.0f}\u00b0", c.sun.altitude);
-        p.text(in.right() - (int)alts.size(), in.bottom() - 1, alts,
-               daytime ? th.warm : th.text_dim, th.panel_bg);
+        p.text(in.x, foot, len, th.text, th.panel_bg, true);
+        p.text(in.right() - (int)alts.size(), foot,
+               alts, daytime ? th.warm : th.text_dim, th.panel_bg, true);
+
+        // centre: a slim daylight progress bar showing how far through the day.
+        // it fills warm during daylight and stays dim at night.
+        int bar_x = in.x + (int)gfx::utf8_cols(len) + 1;
+        int bar_r = in.right() - (int)alts.size() - 1;
+        int bar_w = bar_r - bar_x;
+        if (bar_w >= 4) {
+            Col fillc = daytime ? gfx::hex(0xffb454) : th.text_dim;
+            float fillv = daytime ? pc : 0.f;
+            p.gauge(bar_x, foot, bar_w, fillv, fillc,
+                    gfx::scale(th.panel_border, 0.7f), th.panel_bg);
+        }
+    }
+
+private:
+    // Name the current part of the day and give it a matching tint, so the
+    // title bar reads "DAWN" / "NOON" / "DUSK" / "NIGHT" at a glance.
+    static std::pair<std::string, Col> day_phase(
+            const Ctx& c, const chronos::astro::SunTimes& st,
+            float now_h, bool daytime, float pc, const Theme& th) {
+        double alt = c.sun.altitude;
+        if (!daytime) {
+            // before sunrise or after sunset
+            if (alt > -6)  return {"twilight", gfx::hex(0x9d7cd8)};
+            return {"night", gfx::hex(0x7681b4)};
+        }
+        // within an hour of sunrise / sunset → golden hour
+        if (now_h - st.sunrise_h < 1.0f) return {"dawn", gfx::hex(0xff9e64)};
+        if (st.sunset_h - now_h < 1.0f)  return {"dusk", gfx::hex(0xf7768e)};
+        if (pc > 0.42f && pc < 0.58f)    return {"noon", gfx::hex(0xffd479)};
+        if (pc < 0.5f)                   return {"morning", gfx::hex(0xffcf6b)};
+        return {"afternoon", gfx::hex(0xffb454)};
     }
 };
 

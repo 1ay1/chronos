@@ -129,16 +129,52 @@ public:
     // -- sub-pixel plot: write one of the two pixels in a cell ---------------
     // Reads the partner pixel from a shadow buffer so stacking a top over a
     // previously-set bottom keeps both. For widgets we mostly use cell()/rect.
+    //
+    // Robustness: when the two sub-pixels quantize to the SAME colour we emit a
+    // FULL block (█) coloured by the foreground and leave the background at the
+    // terminal default, instead of ▀ (upper-half) with fg=top/bg=bottom. Some
+    // terminals — notably mobile SSH clients that add vertical line spacing —
+    // drop or under-render a cell's BACKGROUND colour, which turns a smooth
+    // ▀-based gradient into hard horizontal stripes (the bottom/bg half goes
+    // dark). A █ fills the whole cell with the foreground, so uniform regions
+    // survive those terminals; on a correct terminal █(fg) and ▀(fg=bg) are
+    // pixel-identical, so nothing changes there.
     void cell(int cx, int cy, Col top, Col bot) {
-        cv_.set(cx, cy, U'\u2580', cell_style(top, bot));
+        uint8_t tr = q(top.r), tg = q(top.g), tb = q(top.b);
+        uint8_t br = q(bot.r), bg = q(bot.g), bb = q(bot.b);
+        // Treat the two sub-pixels as "the same" when they're within one
+        // quantization step on every channel. A smooth gradient (plus the
+        // ordered dither) makes a cell's top and bottom differ by at most a
+        // step almost everywhere, so this collapses the vast majority of sky
+        // cells to a single full block — which is what makes the gradient hold
+        // together on bg-dropping terminals instead of striping. The colour
+        // shift from picking the average is sub-perceptual (≤ one 32-level step).
+        int step = 255 / 31 + 1;   // one quantization step, with rounding slack
+        if (std::abs(int(tr) - int(br)) <= step &&
+            std::abs(int(tg) - int(bg)) <= step &&
+            std::abs(int(tb) - int(bb)) <= step) {
+            uint8_t mr = uint8_t((int(tr) + int(br)) / 2);
+            uint8_t mg = uint8_t((int(tg) + int(bg)) / 2);
+            uint8_t mb = uint8_t((int(tb) + int(bb)) / 2);
+            // █ with the colour in BOTH fg and bg: fills the whole cell (so it
+            // survives bg-dropping terminals — the fg covers the gap) AND keeps
+            // the bg channel populated so frost()/bg_at()/shadow() can still
+            // read this cell's colour back when compositing over it.
+            cv_.set(cx, cy, U'\u2588', pool_.intern(maya::Style{}
+                .with_fg(maya::Color::rgb(mr, mg, mb))
+                .with_bg(maya::Color::rgb(mr, mg, mb))));
+        } else {
+            cv_.set(cx, cy, U'\u2580', pool_.intern(maya::Style{}
+                .with_fg(maya::Color::rgb(tr, tg, tb))
+                .with_bg(maya::Color::rgb(br, bg, bb))));
+        }
     }
 
     // full-resolution filled rect in *cell* space, uniform colour
     void fill_cells(int x, int y, int w, int h, Col c) {
-        uint16_t st = cell_style(c, c);
         for (int yy = y; yy < y + h; ++yy)
             for (int xx = x; xx < x + w; ++xx)
-                cv_.set(xx, yy, U'\u2580', st);
+                cell(xx, yy, c, c);   // equal halves → full block, bg-safe
     }
 
     // a single solid character cell (space) used for text backgrounds
@@ -243,7 +279,15 @@ public:
                 // top-down inner glow: brighter sheen near the top edge, fading
                 float sheen = (1.f - vt) * (1.f - vt) * 0.10f;
                 glass = gfx::add(glass, Col{sheen, sheen, sheen*1.15f});
-                cv_.set(xx, yy, U'\u2580', cell_style(glass, glass));
+                // Emit a FULL block carrying the glass colour in BOTH fg and
+                // bg. The █ fills the whole cell so the pane survives terminals
+                // that drop cell backgrounds (no stripe), while the bg channel
+                // still holds the colour so bg_at()/frost_at() can read the
+                // frosted tint back when compositing discs and borders over it.
+                uint16_t st = pool_.intern(maya::Style{}
+                    .with_fg(maya::Color::rgb(q(glass.r), q(glass.g), q(glass.b)))
+                    .with_bg(maya::Color::rgb(q(glass.r), q(glass.g), q(glass.b))));
+                cv_.set(xx, yy, U'\u2588', st);
             }
         }
     }

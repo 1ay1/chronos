@@ -21,7 +21,15 @@ public:
         const Theme& th = c.theme;
         p.panel(r.x, r.y, r.w, r.h, th.panel_bg, th.panel_border);
         Rect in = r.inset(1);
-        p.text(in.x + 1, in.y, "\u263e MOON", th.cool, th.panel_bg, true);
+        p.text(in.x + 1, in.y, "☾ MOON", th.cool, th.panel_bg, true);
+        {
+            // title-bar badge: waxing/waning illumination at a glance
+            float il = (float)c.moon.illum * 100.f;
+            std::string tag = std::format("{:.0f}%", il);
+            int tw = (int)gfx::utf8_cols(tag);
+            p.text(in.right() - tw, in.y, tag,
+                   gfx::mix(th.cool, th.text, 0.3f), th.panel_bg, true);
+        }
 
         // ── draw the moon disc (left side) ──────────────────────────────────
         // The disc lives in a square-ish region on the left of the card. Its
@@ -151,16 +159,33 @@ public:
             }
             return s;
         };
-        p.text(tx, ty,     clip(c.moon.glyph + " " + c.moon.name), th.text, th.panel_bg, true);
-        p.text(tx, ty + 1, clip(std::format("{:.0f}% lit", illum * 100)),
+        // phase name — the disc already shows the phase visually, so skip the
+        // double-width emoji glyph here (it desyncs the text columns).
+        p.text(tx, ty, clip(c.moon.name), th.text, th.panel_bg, true);
+
+        // illumination: a percentage readout above its own gauge
+        p.text(tx, ty + 1, clip(std::format("{:.0f}% illuminated", illum * 100)),
+               waxing ? th.cool : gfx::mix(th.cool, th.text_dim, 0.4f), th.panel_bg);
+        int gw = std::max(4, std::min(colw, 16));
+        p.gauge(tx, ty + 2, gw, illum,
+                gfx::hex(0xbfd0ff), gfx::scale(th.panel_border, 0.7f), th.panel_bg);
+
+        // age + waxing/waning direction with an arrow
+        const char* dir = waxing ? "▲ waxing" : "▼ waning";
+        p.text(tx, ty + 3, clip(std::format("{:.1f}d · {}", c.moon.age_days, dir)),
                th.text_dim, th.panel_bg);
-        // illumination gauge
-        p.gauge(tx, ty + 2, std::max(4, std::min(colw, 14)),
-                illum, th.cool, th.panel_border, th.panel_bg);
-        // age in days
-        p.text(tx, ty + 3, clip(std::format("{:.1f}d · {}",
-               c.moon.age_days, waxing ? "wax" : "wane")),
-               th.text_dim, th.panel_bg);
+
+        // countdown to the next full or new moon — the headline lunar event
+        constexpr double SYN = 29.530588853;
+        double to_full = std::fmod(SYN / 2.0 - c.moon.age_days + SYN, SYN);
+        double to_new  = std::fmod(SYN - c.moon.age_days, SYN);
+        bool full_next = to_full <= to_new;
+        double dd = full_next ? to_full : to_new;
+        std::string nxt = std::format("{} in {:.0f}d",
+            full_next ? "○ full" : "● new", std::round(dd));
+        if (ty + 4 < in.bottom())
+            p.text(tx, ty + 4, clip(nxt),
+                   full_next ? th.warm : th.text_dim, th.panel_bg);
     }
 };
 
