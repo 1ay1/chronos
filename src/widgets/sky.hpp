@@ -152,6 +152,40 @@ public:
         float abslat = std::abs((float)c.lat);
         float aurora = gfx::smoothstep(48.f, 62.f, abslat) * (1.f - vz.cloud * 0.8f);
 
+        // golden hour: a warm filmic grade that peaks when the sun sits low
+        // (roughly the 40 min around sunrise/sunset) and fades out by midday or
+        // full dark. `golden` 0..1 keys a whole-frame colour push toward warm
+        // amber in the highlights + a teal lift in the shadows (classic
+        // teal-and-orange film look). Killed under heavy storm cloud.
+        float golden = gfx::smoothstep(10.f, 4.f, sun_alt)        // ramp up as sun drops
+                     * gfx::smoothstep(-8.f, -1.f, sun_alt)       // off once truly set
+                     * (1.f - vz.storm * 0.85f);
+
+        // rainbow: appears when it's raining-but-clearing with the sun up and
+        // fairly low. We arc it on the side of the sky OPPOSITE the sun, at the
+        // ~42° antisolar radius. `rainbow` strength rises with how sunlit-yet-
+        // still-wet the air is (rain present, not a black storm, sun low).
+        float rainbow = std::clamp(vz.rain * 1.4f, 0.f, 1.f)
+                      * gfx::smoothstep(0.f, 8.f, sun_alt)
+                      * gfx::smoothstep(35.f, 16.f, sun_alt)
+                      * (1.f - vz.storm) * (1.f - vz.cloud * 0.5f);
+
+        // golden-hour film grade applied to a finished pixel: warm the
+        // highlights toward amber, lift shadows toward teal, and add a touch of
+        // overall warmth + contrast. Strength = `golden`. A no-op at golden==0.
+        auto grade = [&](Col c0) -> Col {
+            if (golden < 0.01f) return c0;
+            float lum = 0.299f*c0.r + 0.587f*c0.g + 0.114f*c0.b;
+            Col warm{1.06f, 0.92f, 0.70f};   // amber highlight push
+            Col teal{0.78f, 0.95f, 1.04f};   // cool shadow lift
+            // blend each pixel toward warm in the highlights, teal in shadows
+            Col tint = gfx::mix(teal, warm, gfx::smoothstep(0.25f, 0.75f, lum));
+            Col graded{ c0.r * tint.r, c0.g * tint.g, c0.b * tint.b };
+            // a little global warmth + saturation for that low-sun glow
+            graded = gfx::add(graded, gfx::scale(Col{0.10f,0.04f,0.f}, golden));
+            return gfx::mix(c0, graded, golden);
+        };
+
         auto shade = [&](float px, float py) -> Col {
             float vv = 1.f - py / float(PH);
             if (py < horizon_y) {
@@ -261,6 +295,79 @@ public:
                         float pt = gfx::smoothstep(0.9f + bright * 0.6f, 0.f, dpt);
                         col = gfx::add(col, gfx::scale(scol,
                                        pt * (0.4f + bright) * tw * star_show));
+                    }
+
+                    // ── constellations: a few named asterisms drawn as bright
+                    //    anchor stars joined by faint connecting lines. Only on
+                    //    clear-ish nights (fade out under cloud) so they don't
+                    //    fight the overcast deck. Coords are normalised to the
+                    //    upper sky box and slowly drift westward with the night.
+                    float clear = (1.f - vz.cloud) * (1.f - vz.fog) * star_show;
+                    if (clear > 0.10f) {
+                        // Each constellation is a list of normalised (x,y) nodes
+                        // in [0,1]×[0,1] over the star box, plus edges between
+                        // consecutive index pairs.
+                        struct Star2 { float x, y; };
+                        struct Edge  { int a, b; };
+                        // Big Dipper / Plough
+                        static const Star2 dip[] = {
+                            {0.06f,0.30f},{0.16f,0.24f},{0.26f,0.30f},{0.35f,0.38f},
+                            {0.44f,0.33f},{0.52f,0.45f},{0.40f,0.50f}
+                        };
+                        static const Edge dipE[] = {{0,1},{1,2},{2,3},{3,4},{4,5},{5,6},{6,3}};
+                        // Orion (belt + shoulders/feet)
+                        static const Star2 ori[] = {
+                            {0.66f,0.20f},{0.78f,0.22f},   // shoulders
+                            {0.70f,0.40f},{0.73f,0.43f},{0.76f,0.46f}, // belt
+                            {0.64f,0.62f},{0.80f,0.60f}    // feet
+                        };
+                        static const Edge oriE[] = {{0,2},{1,4},{2,3},{3,4},{2,5},{4,6},{0,1}};
+                        // Cassiopeia (the W)
+                        static const Star2 cas[] = {
+                            {0.30f,0.66f},{0.38f,0.58f},{0.46f,0.66f},{0.54f,0.56f},{0.62f,0.66f}
+                        };
+                        static const Edge casE[] = {{0,1},{1,2},{2,3},{3,4}};
+
+                        struct Grp { const Star2* s; int ns; const Edge* e; int ne; };
+                        const Grp groups[] = {
+                            { dip, 7, dipE, 7 },
+                            { ori, 7, oriE, 7 },
+                            { cas, 5, casE, 4 },
+                        };
+                        // map a normalised node into pixel space (upper sky box),
+                        // drifting slowly west over the night.
+                        float drift = std::fmod(c.anim * 0.004f, 1.f);
+                        auto node_px = [&](const Star2& s) -> std::pair<float,float> {
+                            float nx = std::fmod(s.x + 0.4f - drift + 1.f, 1.f);
+                            float bx = 0.06f * PW + nx * 0.88f * PW;
+                            float by = 0.06f * horizon_y + s.y * 0.62f * horizon_y;
+                            return {bx, by};
+                        };
+                        float bestPt = 0.f, bestLine = 0.f;
+                        for (const Grp& g : groups) {
+                            // anchor stars: bright twinkling points
+                            for (int i = 0; i < g.ns; ++i) {
+                                auto [sx, sy] = node_px(g.s[i]);
+                                float d = std::hypot(px - sx, py - sy);
+                                float tw = 0.6f + 0.4f * std::sin(c.anim*2.f + i*1.7f + g.s[i].x*40.f);
+                                bestPt = std::max(bestPt, gfx::smoothstep(1.5f, 0.f, d) * tw);
+                            }
+                            // connecting lines: distance to each segment
+                            for (int k = 0; k < g.ne; ++k) {
+                                auto [ax, ay] = node_px(g.s[g.e[k].a]);
+                                auto [bx, by] = node_px(g.s[g.e[k].b]);
+                                float vx = bx - ax, vy = by - ay;
+                                float L2 = vx*vx + vy*vy + 1e-3f;
+                                float t = std::clamp(((px-ax)*vx + (py-ay)*vy) / L2, 0.f, 1.f);
+                                float cxp = ax + t*vx, cyp = ay + t*vy;
+                                float dl = std::hypot(px - cxp, py - cyp);
+                                bestLine = std::max(bestLine, gfx::smoothstep(0.7f, 0.f, dl));
+                            }
+                        }
+                        Col cstar{0.80f,0.88f,1.0f};
+                        col = gfx::add(col, gfx::scale(cstar, bestPt * 0.9f * clear));
+                        col = gfx::add(col, gfx::scale(Col{0.30f,0.40f,0.60f},
+                                       bestLine * 0.22f * clear));
                     }
 
                     // shooting stars: every ~6s a meteor crosses the sky. The
@@ -396,6 +503,45 @@ public:
                     }
                     } // end cloud-body guard
                 }
+                // ── rainbow: a 42° primary arc (+ faint secondary) centred on
+                //    the antisolar point. We measure each pixel's angular radius
+                //    from that point; bands of spectral colour land in a thin
+                //    annulus. Drawn over the sky/cloud composite so it reads as
+                //    light in the air. Only when `rainbow` strength is non-trivial.
+                if (rainbow > 0.02f && py < horizon_y) {
+                    // antisolar point = mirror of the sun through screen centre,
+                    // dropped below the horizon-ish so the arc bows upward.
+                    float ax = 2.f * (PW * 0.5f) - sun_x;
+                    float ay = horizon_y + (horizon_y - sun_y) * 0.6f;
+                    float rr = std::hypot(px - ax, py - ay);
+                    // radius of the primary band, in pixels, scaled to the frame
+                    float R0 = PW * 0.46f;
+                    float bandw = PW * 0.060f;            // arc thickness
+                    // primary arc: red outside → violet inside across the band
+                    float t = (rr - (R0 - bandw)) / bandw;   // 0 inner .. 1 outer
+                    float in_band = gfx::smoothstep(-0.05f, 0.08f, t)
+                                  * gfx::smoothstep(1.05f, 0.92f, t);
+                    if (in_band > 0.001f && py < ay) {       // upper arc only
+                        // spectral ramp red(outer)→violet(inner)
+                        Col spec;
+                        float h = std::clamp(t, 0.f, 1.f);   // 0 violet .. 1 red
+                        if      (h < 0.25f) spec = gfx::mix(Col{0.45f,0.20f,0.85f}, Col{0.20f,0.45f,0.95f}, h/0.25f);
+                        else if (h < 0.50f) spec = gfx::mix(Col{0.20f,0.45f,0.95f}, Col{0.25f,0.85f,0.45f}, (h-0.25f)/0.25f);
+                        else if (h < 0.75f) spec = gfx::mix(Col{0.25f,0.85f,0.45f}, Col{0.98f,0.85f,0.25f}, (h-0.50f)/0.25f);
+                        else                spec = gfx::mix(Col{0.98f,0.85f,0.25f}, Col{0.95f,0.35f,0.25f}, (h-0.75f)/0.25f);
+                        col = gfx::add(col, gfx::scale(spec, in_band * rainbow * 0.42f));
+                    }
+                    // faint secondary arc, wider radius, reversed order, dimmer
+                    float R1 = R0 + bandw * 2.6f;
+                    float t2 = (rr - (R1 - bandw)) / bandw;
+                    float in2 = gfx::smoothstep(-0.05f, 0.08f, t2)
+                              * gfx::smoothstep(1.05f, 0.92f, t2);
+                    if (in2 > 0.001f && py < ay) {
+                        float h = std::clamp(1.f - t2, 0.f, 1.f);   // reversed
+                        Col spec = gfx::mix(Col{0.45f,0.25f,0.80f}, Col{0.90f,0.45f,0.30f}, h);
+                        col = gfx::add(col, gfx::scale(spec, in2 * rainbow * 0.16f));
+                    }
+                }
                 // storm: drain colour and darken the whole sky so the scene
                 // reads as a brooding overcast; a lightning flash briefly lifts
                 // it toward a cold blue-white.
@@ -406,7 +552,7 @@ public:
                 }
                 if (flash > 0.001f)
                     col = gfx::add(col, gfx::scale(Col{0.55f,0.62f,0.85f}, flash * 0.9f));
-                return gfx::posterize(gfx::saturate(col, 1.25f), 8.f);
+                return gfx::posterize(gfx::saturate(grade(col), 1.25f), 8.f);
             }
             // ground — layered rolling hills with atmospheric depth.
             // Sky colour at the horizon, used to tint distant ridges (haze).
@@ -460,7 +606,7 @@ public:
                 // storm/flash also touch the water so it stays consistent
                 if (vz.storm > 0.01f) water = gfx::mix(water, gfx::scale(water,0.5f), vz.storm);
                 if (flash > 0.001f)   water = gfx::add(water, gfx::scale(Col{0.5f,0.57f,0.8f}, flash*0.7f));
-                return gfx::posterize(gfx::saturate(water, 1.25f), 8.f);
+                return gfx::posterize(gfx::saturate(grade(water), 1.25f), 8.f);
             }
 
             // Three ridges: far (hazy, high) → near (saturated, low). Day greens
@@ -536,7 +682,7 @@ public:
             // cards read, without crushing the foreground meadow to flat black.
             float foot = gfx::smoothstep(PH * 0.90f, float(PH), py);
             col = gfx::scale(col, 1.f - foot * 0.30f);
-            return gfx::posterize(gfx::saturate(col, 1.35f), 7.f);
+            return gfx::posterize(gfx::saturate(grade(col), 1.35f), 7.f);
         };
 
         // High-res render: each emitted sub-pixel is the average of several

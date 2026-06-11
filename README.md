@@ -141,6 +141,29 @@ When your auto-located latitude is far enough north (or south), clear nights get
 an **aurora**: undulating green-to-violet curtains drifting across the upper sky.
 It pays off the IP geolocation — chase the lights just by being somewhere cold.
 
+### Golden hour, rainbows & constellations
+
+A few finishing touches make the scene feel alive at the edges of the day:
+
+- **Golden-hour grade** — for the ~40 minutes around sunrise and sunset, the
+  whole frame gets a warm filmic colour grade: amber highlights, a cool teal
+  lift in the shadows, and an overall low-sun glow. It ramps up as the sun drops
+  and fades to neutral by midday (and to night by full dark).
+- **Rainbow after rain** — when the rain eases off while the sun is still up and
+  low, a **42° rainbow arc** appears in the sky opposite the sun, with a fainter
+  reversed secondary bow outside it.
+- **Constellations** — on clear nights the Big Dipper, Orion, and Cassiopeia are
+  drawn as bright twinkling stars joined by faint lines, drifting slowly west
+  through the night. They fade out under cloud or fog.
+
+Try them with the weather override — golden hour fires automatically at a low
+sun, and a clearing shower paints the bow:
+
+```bash
+CHRONOS_WX_CODE=61 ./build/chronos    # rain — wait for it to clear for a rainbow
+CHRONOS_LAT=45 CHRONOS_LON=10 ./build/chronos   # mid-latitude clear night = constellations
+```
+
 ## How it works
 
 Every section is a self-contained **graphical widget** that paints itself into a
