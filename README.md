@@ -20,6 +20,11 @@ and your location:
   the sun's true altitude (a NOAA solar-position calculation), so at 6am you get
   a pink horizon and a low sun, at noon a deep blue dome, at dusk burning orange,
   and at night a star-field with the moon.
+- **Atmospheric scattering** — the dome isn't a flat gradient: a Mie horizon
+  glow band sets the whole horizon ablaze as the sun drops (cheap Rayleigh/Mie
+  approximations), and the sky is brighter and warmer on the sun's side, cooler
+  opposite, so it has a real light direction. An ordered dither dissolves the
+  posterize banding into a smooth, continuous gradient.
 - **A real sun** that arcs across the sky by its computed azimuth & altitude,
   with a soft glow and a bright disc.
 - **A real moon** at the correct phase — the lit/unlit limb is shaded from the

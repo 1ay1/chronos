@@ -186,10 +186,65 @@ public:
             return gfx::mix(c0, graded, golden);
         };
 
+        // ordered (Bayer-ish) dither: a tiny per-pixel value offset added before
+        // the posterize step. Posterizing to ~8 levels otherwise bands the
+        // smooth sky gradient into visible stripes; nudging each pixel by a
+        // fraction of a band breaks those edges into a fine stipple that the eye
+        // integrates back into a continuous, "HD" gradient. Amplitude is one
+        // posterize step so it never shifts the colour perceptibly, just
+        // dissolves the contour line.
+        auto dither = [&](Col c0, float px, float py, float levels) -> Col {
+            // 4x4 Bayer matrix value in 0..1, centered to -0.5..0.5
+            static const int B[16] = { 0, 8, 2,10, 12, 4,14, 6,
+                                       3,11, 1, 9, 15, 7,13, 5 };
+            int bx = ((int)px) & 3, by = ((int)py) & 3;
+            float d = (B[by * 4 + bx] / 16.f) - 0.5f;
+            float amp = (1.f / levels) * 0.9f;
+            return { c0.r + d * amp, c0.g + d * amp, c0.b + d * amp };
+        };
+
         auto shade = [&](float px, float py) -> Col {
             float vv = 1.f - py / float(PH);
             if (py < horizon_y) {
                 Col col = sky_palette(sun_alt, vv);
+
+                // ── atmospheric scattering ─────────────────────────────────
+                // A real sky is not a flat vertical gradient. Two cheap
+                // approximations of Rayleigh/Mie scattering give it depth and
+                // make low-sun skies genuinely glow:
+                //   (a) Mie HORIZON BAND — a bright halo hugging the horizon
+                //       (forward-scattered light) that reddens and intensifies
+                //       as the sun drops, so sunrise/sunset set the whole
+                //       horizon ablaze instead of a thin line at the sun.
+                //   (b) AZIMUTHAL warmth — the dome is brighter and warmer on
+                //       the sun's side, cooler opposite, so the sky has a real
+                //       light direction rather than a symmetric wash.
+                {
+                    // proximity to the horizon (0 at zenith .. 1 on the line)
+                    float hb = gfx::smoothstep(horizon_y * 0.55f, horizon_y, py);
+                    // how low the sun is: peaks the band around sunrise/sunset
+                    float low = gfx::smoothstep(16.f, -2.f, sun_alt)
+                              * gfx::smoothstep(-12.f, -2.f, sun_alt);
+                    // warm sunset band reddens as the sun sinks; cooler by day
+                    Col band = gfx::mix(Col{1.00f,0.78f,0.50f},  // daytime cream-gold
+                                        Col{1.00f,0.42f,0.24f},  // low-sun ember
+                                        gfx::smoothstep(10.f, -1.f, sun_alt));
+                    // brighter on the sun's azimuth side of the sky
+                    float toward = gfx::smoothstep(PW * 0.85f, 0.f, std::abs(px - sun_x));
+                    float mie = hb * hb * (0.16f + 0.55f * low) * (0.45f + 0.55f * toward);
+                    col = gfx::add(col, gfx::scale(band, mie * (1.f - vz.cloud * 0.55f)));
+
+                    // azimuthal directional tint across the whole dome
+                    float az = (sun_x / PW - 0.5f);                // -0.5..0.5 sun side
+                    float side = (px / PW - 0.5f) * (az > 0 ? 1.f : -1.f);
+                    float warm_dir = std::clamp(side * 0.5f + 0.5f, 0.f, 1.f);
+                    float daylight = gfx::smoothstep(-4.f, 10.f, sun_alt);
+                    Col tint = gfx::mix(Col{0.0f,0.01f,0.04f},     // cool away-side
+                                        Col{0.06f,0.04f,0.0f},     // warm sun-side
+                                        warm_dir);
+                    col = gfx::add(col, gfx::scale(tint,
+                                   (0.4f + 0.6f * vv) * (0.3f + 0.7f * daylight)));
+                }
 
                 // sun: limb-darkened disc + warm corona + radial glow
                 if (sun_alt > -2.f) {
@@ -552,7 +607,7 @@ public:
                 }
                 if (flash > 0.001f)
                     col = gfx::add(col, gfx::scale(Col{0.55f,0.62f,0.85f}, flash * 0.9f));
-                return gfx::posterize(gfx::saturate(grade(col), 1.25f), 8.f);
+                return gfx::posterize(dither(gfx::saturate(grade(col), 1.25f), px, py, 8.f), 8.f);
             }
             // ground — layered rolling hills with atmospheric depth.
             // Sky colour at the horizon, used to tint distant ridges (haze).
@@ -606,7 +661,7 @@ public:
                 // storm/flash also touch the water so it stays consistent
                 if (vz.storm > 0.01f) water = gfx::mix(water, gfx::scale(water,0.5f), vz.storm);
                 if (flash > 0.001f)   water = gfx::add(water, gfx::scale(Col{0.5f,0.57f,0.8f}, flash*0.7f));
-                return gfx::posterize(gfx::saturate(grade(water), 1.25f), 8.f);
+                return gfx::posterize(dither(gfx::saturate(grade(water), 1.25f), px, py, 8.f), 8.f);
             }
 
             // Three ridges: far (hazy, high) → near (saturated, low). Day greens
@@ -682,7 +737,7 @@ public:
             // cards read, without crushing the foreground meadow to flat black.
             float foot = gfx::smoothstep(PH * 0.90f, float(PH), py);
             col = gfx::scale(col, 1.f - foot * 0.30f);
-            return gfx::posterize(gfx::saturate(grade(col), 1.35f), 7.f);
+            return gfx::posterize(dither(gfx::saturate(grade(col), 1.35f), px, py, 7.f), 7.f);
         };
 
         // High-res render: each emitted sub-pixel is the average of several
