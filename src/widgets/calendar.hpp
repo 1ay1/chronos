@@ -437,9 +437,23 @@ private:
         int content = 3 + 4 + 4 + 3 + (1 + n_ev);
         int avail   = in.bottom() - yy;                // rows left below the day
         int slack   = std::max(0, avail - content);
-        int gap     = std::clamp(slack / 5, 0, 3);     // spread across 5 gaps
+        // ALWAYS keep a blank row between a section's content and the next
+        // title — titles touching the row above read cramped. When the rail is
+        // too short for 5 gaps, drop trailing UPCOMING events to make room
+        // rather than gluing the sections together.
+        if (slack < 5) {
+            int need = 5 - slack;
+            int drop = std::min(need, n_ev - 1);
+            n_ev -= drop; content -= drop; slack += drop;
+        }
+        int gap = std::clamp(slack / 5, 1, 3);         // spread across 5 gaps
+        // hard guard: a section is painted only when its FULL height fits
+        // above the panel's bottom border — a clipped gauge riding the border
+        // looks broken. Trailing sections that don't fit are skipped whole.
+        auto fits = [&](int rows) { return yy + rows <= in.bottom(); };
 
         // ── MOON ────────────────────────────────────────────────────────────
+        if (!fits(3)) { (void)sun_alt; return; }
         section(p, x, in.right(), yy, "MOON", th.cool, bg); yy++;
         p.text(x, yy, std::format("{}  {}", moon_symbol(mp.frac), mp.name),
                th.text, bg); yy++;
@@ -449,6 +463,7 @@ private:
                th.text_dim, bg); yy += 1 + gap;
 
         // ── SUN: rise / set / daylight for the selected day ──────────────────
+        if (!fits(4)) { (void)sun_alt; return; }
         section(p, x, in.right(), yy, "SUN", th.warm, bg); yy++;
         if (st.valid) {
             kv(p, x, rx, yy, "\u2191 Rise", clock_hm(st.sunrise_h), th.text_dim, th.text, bg); yy++;
@@ -461,6 +476,7 @@ private:
         }
 
         // ── AT A GLANCE: week / day-of-year / season ─────────────────────────
+        if (!fits(4)) { (void)sun_alt; return; }
         section(p, x, in.right(), yy, "AT A GLANCE", th.accent, bg); yy++;
         kv(p, x, rx, yy, "Day of year", std::format("{}/{}", doy, year_len(year)),
            th.text_dim, th.text, bg); yy++;
@@ -469,6 +485,7 @@ private:
            std::string(season_mark(month, d)), th.text_dim, th.cool, bg); yy += 1 + gap;
 
         // ── YEAR PROGRESS: a thin bar of how far through the year we are ──────
+        if (!fits(2)) { (void)sun_alt; return; }
         section(p, x, in.right(), yy, "YEAR", th.cool, bg); yy++;
         float yprog = float(doy) / float(year_len(year));
         int ygw = std::max(5, in.w - 7);
@@ -477,6 +494,7 @@ private:
                th.text_dim, bg); yy += 1 + gap;
 
         // ── UPCOMING events with countdowns ──────────────────────────────────
+        if (!fits(2)) { (void)sun_alt; return; }
         section(p, x, in.right(), yy, "UPCOMING", th.accent, bg); yy++;
         for (int i = 0; i < n_ev; ++i) {
             auto& e = evs[i];
