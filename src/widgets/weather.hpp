@@ -7,6 +7,7 @@
 
 #include "../widget.hpp"
 #include "../weather.hpp"
+#include "card.hpp"
 #include <cmath>
 #include <format>
 
@@ -22,18 +23,12 @@ public:
         p.panel(r.x, r.y, r.w, r.h, th.panel_bg, th.panel_border);
         Rect in = r.inset(1);
 
-        // title, with a faint "stale/offline" marker when data is old
-        p.text(in.x + 1, in.y, "\u2601 WEATHER", th.cool, th.panel_bg, true);
-        if (w.valid && w.stale) {
-            const char* tag = "offline";
-            p.text(in.right() - (int)gfx::utf8_cols(tag), in.y, tag, th.warn, th.panel_bg);
-        }
-
         if (!w.valid) {
+            card::title(p, in, "WEATHER", th.cool);
             const char* msg = w.stale ? "offline \u2014 no data yet"
                                       : "fetching live data\u2026";
-            p.text(in.x + 1, in.y + 2, msg, th.text_dim, th.panel_bg);
-            p.text(in.x + 1, in.y + 3, "via open-meteo.com", th.text_dim, th.panel_bg);
+            card::txt(p, in.x + 1, in.y + 2, msg, th.text_dim);
+            card::txt(p, in.x + 1, in.y + 3, "via open-meteo.com", th.text_dim);
             return;
         }
 
@@ -41,12 +36,14 @@ public:
         const char* label = chronos::weather::code_label(w.code);
         Col tcol = temp_color(th, w.temp_c);
 
-        // title-bar badge: day/night marker on the right of the header
-        if (!(w.valid && w.stale)) {
-            const char* dn = w.is_day ? "☀ day" : "☾ night";
-            Col dnc = w.is_day ? th.warm : gfx::mix(th.cool, th.text_dim, 0.3f);
-            p.text(in.right() - (int)gfx::utf8_cols(dn), in.y, dn, dnc, th.panel_bg);
-        }
+        // title: accent chip banner + status badge (offline beats day/night)
+        if (w.stale)
+            card::title(p, in, "WEATHER", th.cool, "offline", th.warn);
+        else if (w.is_day)
+            card::title(p, in, "WEATHER", th.cool, "\u2600 day", th.warm);
+        else
+            card::title(p, in, "WEATHER", th.cool, "\u263e night",
+                        gfx::mix(th.cool, th.text_dim, 0.3f));
 
         // Split the card into a left column (big condition + temperature) and a
         // right column (stat rows). The divider sits at a fixed fraction so the
@@ -57,85 +54,66 @@ public:
         bool two_col = (in.right() - 1) - (split + 1) >= 12;
         int gy = in.y + 2;
 
-        // glyph + big temperature on the headline row, with a thin temp-tinted
-        // accent rule to the left so the headline reads as a coloured block.
-        std::string temp = std::format("{:.0f}°", w.temp_c);
-        p.text(lx, gy, glyph, tcol, th.panel_bg, true);
-        p.text(lx + 2, gy, temp, tcol, th.panel_bg, true);
+        // glyph + big temperature on the headline row — floats on the glass
+        std::string temp = std::format("{:.0f}\u00b0", w.temp_c);
+        card::txt(p, lx, gy, glyph, tcol, true);
+        card::txt(p, lx + 2, gy, temp, tcol, true);
         // condition label + feels-like stacked beneath, clipped to the column
         int lwid = (two_col ? split : in.right() - 1) - lx;
-        p.text(lx, gy + 1, clip(label, lwid), th.text, th.panel_bg);
+        card::txt(p, lx, gy + 1, card::clip_cols(label, lwid), th.text, true);
         // feels-like with an up/down arrow vs. actual temperature
         double fd = w.feels_c - w.temp_c;
-        const char* fa = fd > 0.7 ? "↑" : fd < -0.7 ? "↓" : "≈";
-        p.text(lx, gy + 2,
-               clip(std::format("feels {} {:.0f}°", fa, w.feels_c), lwid),
-               th.text_dim, th.panel_bg);
+        const char* fa = fd > 0.7 ? "\u2191" : fd < -0.7 ? "\u2193" : "\u2248";
+        card::txt(p, lx, gy + 2,
+                  card::clip_cols(std::format("feels {} {:.0f}\u00b0", fa, w.feels_c), lwid),
+                  th.text_dim);
 
         // ── right column: stat rows, label left / value right-aligned ───────
         if (two_col) {
-            int sx = split + 1;
-            int rx = in.right() - 1;
-            // a faint vertical divider between the columns
-            for (int cy = gy; cy <= gy + 2; ++cy)
-                p.text(split, cy, "│", gfx::scale(th.panel_border, 0.8f), th.panel_bg);
-            kv(p, th, sx, rx, gy + 0, "↑↓ hi/lo",
-               std::format("{:.0f}°/{:.0f}°", w.hi_c, w.lo_c), th.warm);
-            kv(p, th, sx, rx, gy + 1, "○ humid",
-               std::format("{}%", w.humidity), th.cool);
-            kv(p, th, sx, rx, gy + 2, "≈ wind",
-               std::format("{:.0f} {}", w.wind_kmh,
-                           chronos::weather::wind_compass(w.wind_dir)), th.text);
+            int sx = split + 2;
+            int rx = in.right() - 2;
+            // a faint vertical divider between the columns, fading downward
+            for (int cy = gy; cy <= gy + 2; ++cy) {
+                float t = float(cy - gy) / 2.f;
+                Col bgc = card::frostbg(p, split, cy);
+                p.text(split, cy, "\u2502",
+                       gfx::mix(gfx::scale(th.panel_border, 1.1f), bgc, t * 0.5f), bgc);
+            }
+            card::kv(p, sx, rx, gy + 0, "\u2191\u2193 hi/lo",
+                     std::format("{:.0f}\u00b0/{:.0f}\u00b0", w.hi_c, w.lo_c),
+                     th.text_dim, th.warm);
+            card::kv(p, sx, rx, gy + 1, "\u25cb humid",
+                     std::format("{}%", w.humidity), th.text_dim, th.cool);
+            card::kv(p, sx, rx, gy + 2, "\u2248 wind",
+                     std::format("{:.0f} {}", w.wind_kmh,
+                                 chronos::weather::wind_compass(w.wind_dir)),
+                     th.text_dim, th.text);
             // if the card is tall enough, add a humidity gauge below the stats
             if (gy + 3 < in.bottom() - 1 && rx - sx >= 6)
-                p.gauge(sx, gy + 3, rx - sx + 1, w.humidity / 100.f,
-                        th.cool, gfx::scale(th.panel_border, 0.7f), th.panel_bg);
+                card::gauge(p, sx, gy + 3, rx - sx + 1, w.humidity / 100.f, th.cool);
         } else {
             // too narrow for a side column: stack stats full-width below the
             // headline, but only as many as fit above the footer so nothing
             // collides. headline occupies gy..gy+2; footer is bottom-1.
-            int rx = in.right() - 1;
+            int rx = in.right() - 2;
             int row = gy + 3;
             int last = in.bottom() - 2;            // keep clear of the footer
             auto stat = [&](const char* k, const std::string& v, Col vc) {
-                if (row <= last) { kv(p, th, lx, rx, row, k, v, vc); row++; }
+                if (row <= last) { card::kv(p, lx, rx, row, k, v, th.text_dim, vc); row++; }
             };
-            stat("↑↓ hi/lo", std::format("{:.0f}°/{:.0f}°", w.hi_c, w.lo_c), th.warm);
-            stat("○ humidity", std::format("{}%", w.humidity), th.cool);
-            stat("≈ wind", std::format("{:.0f} {}", w.wind_kmh,
+            stat("\u2191\u2193 hi/lo", std::format("{:.0f}\u00b0/{:.0f}\u00b0", w.hi_c, w.lo_c), th.warm);
+            stat("\u25cb humidity", std::format("{}%", w.humidity), th.cool);
+            stat("\u2248 wind", std::format("{:.0f} {}", w.wind_kmh,
                           chronos::weather::wind_compass(w.wind_dir)), th.text);
         }
 
-        // footer: data source + age
+        // footer: data source + age, quiet, riding the glass
         std::string src = "open-meteo \u00b7 " + age_str(c.now, w.fetched);
-        p.text(lx, in.bottom() - 1, clip(src, in.w - 2), th.text_dim, th.panel_bg);
+        card::txt(p, lx, in.bottom() - 1, card::clip_cols(src, in.w - 2),
+                  gfx::mix(th.text_dim, th.panel_border, 0.25f));
     }
 
 private:
-    // truncate to fit `cols` display columns, adding an ellipsis if cut.
-    static std::string clip(const std::string& s, int cols) {
-        if (cols <= 0) return "";
-        if ((int)gfx::utf8_cols(s) <= cols) return s;
-        if (cols == 1) return "\u2026";
-        std::string out; int w = 0;
-        for (size_t i = 0; i < s.size();) {
-            char32_t cp; int n = gfx::utf8_decode(s, i, cp);
-            int cw = (cp >= 0x1100) ? 2 : 1;
-            if (w + cw > cols - 1) break;
-            out.append(s, i, n); w += cw; i += n;
-        }
-        out += "\u2026";
-        return out;
-    }
-
-    // a label : value row, value right-aligned to rx
-    static void kv(Painter& p, const Theme& th, int x, int rx, int y,
-                   const std::string& key, const std::string& val, Col vc) {
-        p.text(x, y, key, th.text_dim, th.panel_bg);
-        int vx = rx - (int)gfx::utf8_cols(val) + 1;
-        p.text(vx, y, val, vc, th.panel_bg, true);
-    }
-
     // map temperature to a colour: cold→cool blue, mild→text, hot→warm/bad
     static Col temp_color(const Theme& th, double t) {
         if (t <= 0)  return th.cool;

@@ -8,6 +8,7 @@
 
 #include "../widget.hpp"
 #include "sky.hpp"
+#include "card.hpp"
 #include <cmath>
 #include <format>
 
@@ -21,7 +22,6 @@ public:
         const Theme& th = c.theme;
         p.panel(r.x, r.y, r.w, r.h, th.panel_bg, th.panel_border);
         Rect in = r.inset(1);
-        p.text(in.x + 1, in.y, "\u2600 SUN", th.warm, th.panel_bg, true);
 
         auto& st = c.sun_times;
         auto hm = [](double h) {
@@ -31,10 +31,11 @@ public:
         };
 
         if (!st.valid || st.always_up || st.always_down) {
+            card::title(p, in, "SUN", th.warm);
             const char* msg = st.always_up ? "midnight sun \u2600"
                             : st.always_down ? "polar night \u263e"
                             : "set CHRONOS_LAT/LON";
-            p.text(in.x + 1, in.y + 2, msg, th.text_dim, th.panel_bg);
+            card::txt(p, in.x + 1, in.y + 2, msg, th.text_dim);
             return;
         }
 
@@ -43,11 +44,10 @@ public:
         bool daytime = now_h >= st.sunrise_h && now_h <= st.sunset_h;
         float pc = std::clamp(prog, 0.f, 1.f);
 
-        // ── phase-of-day badge in the title bar ─────────────────────────────
-        // a small label that names where we are in the day, coloured to match.
+        // ── title: accent chip banner + phase-of-day badge (matches the
+        // calendar rail's section banners — one design language everywhere)
         auto [badge, badge_col] = day_phase(c, st, now_h, daytime, pc, th);
-        int bw = (int)gfx::utf8_cols(badge);
-        p.text(in.right() - bw, in.y, badge, badge_col, th.panel_bg, true);
+        card::title(p, in, "SUN", th.warm, badge, badge_col);
 
         // arc band geometry (in sub-pixels) inside the card
         int arc_x0 = in.x, arc_w = in.w;
@@ -150,35 +150,31 @@ public:
             p.text(tcx, horizon_cy, tk.lab, tc, p.bg_at(tcx, horizon_cy, th.panel_bg));
         }
 
-        // ── endpoint labels just above the horizon line ─────────────────────
+        // ── endpoint labels just above the horizon, riding the scene ───────
         int label_y = in.bottom() - 3;
-        p.text(in.x, label_y, "\u2191" + hm(st.sunrise_h), th.warm, th.panel_bg);
+        card::txt(p, in.x + 1, label_y, "\u2191" + hm(st.sunrise_h), th.warm, true);
         std::string set = hm(st.sunset_h) + "\u2193";
-        p.text(in.right() - (int)gfx::utf8_cols(set), label_y, set,
-               gfx::hex(0xbb9af7), th.panel_bg);
+        card::txt(p, in.right() - 1 - (int)gfx::utf8_cols(set), label_y, set,
+                  gfx::hex(0xbb9af7), true);
 
         // ── footer: daylight progress bar + readouts ────────────────────────
         int dh = (int)st.daylight_h, dm = (int)std::round((st.daylight_h - dh) * 60);
         int foot = in.bottom() - 1;
 
-        // left: daylight length; right: live altitude
+        // left: daylight length; right: live altitude — over the glass
         std::string len = std::format("{}h{:02}m", dh, dm);
         std::string alts = std::format("{:+.0f}\u00b0", c.sun.altitude);
-        p.text(in.x, foot, len, th.text, th.panel_bg, true);
-        p.text(in.right() - (int)alts.size(), foot,
-               alts, daytime ? th.warm : th.text_dim, th.panel_bg, true);
+        card::txt(p, in.x + 1, foot, len, th.text, true);
+        card::txt(p, in.right() - 1 - (int)gfx::utf8_cols(alts), foot,
+                  alts, daytime ? th.warm : th.text_dim, true);
 
-        // centre: a slim daylight progress bar showing how far through the day.
-        // it fills warm during daylight and stays dim at night.
-        int bar_x = in.x + (int)gfx::utf8_cols(len) + 1;
-        int bar_r = in.right() - (int)alts.size() - 1;
+        // centre: slim daylight progress bar in a recessed dark slot
+        int bar_x = in.x + 1 + (int)gfx::utf8_cols(len) + 1;
+        int bar_r = in.right() - 1 - (int)gfx::utf8_cols(alts) - 1;
         int bar_w = bar_r - bar_x;
-        if (bar_w >= 4) {
-            Col fillc = daytime ? gfx::hex(0xffb454) : th.text_dim;
-            float fillv = daytime ? pc : 0.f;
-            p.gauge(bar_x, foot, bar_w, fillv, fillc,
-                    gfx::scale(th.panel_border, 0.7f), th.panel_bg);
-        }
+        if (bar_w >= 4)
+            card::gauge(p, bar_x, foot, bar_w, daytime ? pc : 0.f,
+                        daytime ? gfx::hex(0xffb454) : gfx::scale(th.text_dim, 0.8f));
     }
 
 private:

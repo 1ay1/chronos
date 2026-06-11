@@ -57,6 +57,7 @@ int main(int argc, char** argv) {
     c.weather.wind_dir = 225;
     c.weather.code     = argc > 3 ? atoi(argv[3]) : 2;
     c.weather.is_day   = c.sun.altitude > 0;
+    c.weather.fetched  = c.now - 25;
 
     ui::SunArcWidget sun;
     ui::MoonWidget   moon;

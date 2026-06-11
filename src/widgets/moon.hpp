@@ -8,6 +8,7 @@
 
 #include "../widget.hpp"
 #include "sky.hpp"
+#include "card.hpp"
 #include <cmath>
 #include <format>
 
@@ -21,14 +22,11 @@ public:
         const Theme& th = c.theme;
         p.panel(r.x, r.y, r.w, r.h, th.panel_bg, th.panel_border);
         Rect in = r.inset(1);
-        p.text(in.x + 1, in.y, "☾ MOON", th.cool, th.panel_bg, true);
+        // title: accent chip banner + illumination badge (same banner language
+        // as the calendar rail / sun card)
         {
-            // title-bar badge: waxing/waning illumination at a glance
-            float il = (float)c.moon.illum * 100.f;
-            std::string tag = std::format("{:.0f}%", il);
-            int tw = (int)gfx::utf8_cols(tag);
-            p.text(in.right() - tw, in.y, tag,
-                   gfx::mix(th.cool, th.text, 0.3f), th.panel_bg, true);
+            std::string tag = std::format("{:.0f}%", (float)c.moon.illum * 100.f);
+            card::title(p, in, "MOON", th.cool, tag, gfx::mix(th.cool, th.text, 0.3f));
         }
 
         // ── draw the moon disc (left side) ──────────────────────────────────
@@ -37,7 +35,7 @@ public:
         // left-column width (in cells, ×2 for sub-pixel aspect), so it stays a
         // true circle no matter the card's proportions instead of a squished
         // blob. Centre it in that region.
-        int   inner_rows = in.h;                       // cell rows inside the card
+        int   inner_rows = in.h - 1;                   // cell rows below the title
         float avail_h    = inner_rows * 2.f;           // sub-pixels of height
         // reserve the right ~55% of the card for stats on a wide card; on a
         // narrow card the disc may use most of the width and stats stack below.
@@ -52,7 +50,7 @@ public:
         R = std::max(R, 5.f);
         // centre of the disc, in sub-pixel space (x also in sub-pixels = cell*2)
         float cxp = (in.x + 1.f) * 2.f + R;            // 1-cell left margin
-        float cyp = in.y * 2.f + avail_h * 0.5f;       // vertically centred
+        float cyp = (in.y + 1) * 2.f + avail_h * 0.5f; // centred below the title
         float frac = (float)c.moon.frac;              // 0 new .. .5 full .. 1 new
         // illuminated fraction & which limb is lit
         float illum = (float)c.moon.illum;            // 0..1
@@ -134,7 +132,7 @@ public:
             }
             return gfx::scale(a, 1.f / (SSx * SSy));
         };
-        for (int cy = in.y; cy < in.bottom(); ++cy)
+        for (int cy = in.y + 1; cy < in.bottom(); ++cy)
             for (int cx = in.x; cx < (int)((cxp + R) / 2.f + 2); ++cx) {
                 if (cx >= in.right()) break;
                 // composite over the frosted-glass fill already in the cell so
@@ -161,19 +159,18 @@ public:
         };
         // phase name — the disc already shows the phase visually, so skip the
         // double-width emoji glyph here (it desyncs the text columns).
-        p.text(tx, ty, clip(c.moon.name), th.text, th.panel_bg, true);
+        card::txt(p, tx, ty, clip(c.moon.name), th.text, true);
 
         // illumination: a percentage readout above its own gauge
-        p.text(tx, ty + 1, clip(std::format("{:.0f}% illuminated", illum * 100)),
-               waxing ? th.cool : gfx::mix(th.cool, th.text_dim, 0.4f), th.panel_bg);
+        card::txt(p, tx, ty + 1, clip(std::format("{:.0f}% illuminated", illum * 100)),
+                  waxing ? th.cool : gfx::mix(th.cool, th.text_dim, 0.4f));
         int gw = std::max(4, std::min(colw, 16));
-        p.gauge(tx, ty + 2, gw, illum,
-                gfx::hex(0xbfd0ff), gfx::scale(th.panel_border, 0.7f), th.panel_bg);
+        card::gauge(p, tx, ty + 2, gw, illum, gfx::hex(0xbfd0ff));
 
         // age + waxing/waning direction with an arrow
         const char* dir = waxing ? "▲ waxing" : "▼ waning";
-        p.text(tx, ty + 3, clip(std::format("{:.1f}d · {}", c.moon.age_days, dir)),
-               th.text_dim, th.panel_bg);
+        card::txt(p, tx, ty + 3, clip(std::format("{:.1f}d · {}", c.moon.age_days, dir)),
+                  th.text_dim);
 
         // countdown to the next full or new moon — the headline lunar event
         constexpr double SYN = 29.530588853;
@@ -184,8 +181,8 @@ public:
         std::string nxt = std::format("{} in {:.0f}d",
             full_next ? "○ full" : "● new", std::round(dd));
         if (ty + 4 < in.bottom())
-            p.text(tx, ty + 4, clip(nxt),
-                   full_next ? th.warm : th.text_dim, th.panel_bg);
+            card::txt(p, tx, ty + 4, clip(nxt),
+                      full_next ? th.warm : th.text_dim);
     }
 };
 
