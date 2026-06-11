@@ -129,12 +129,25 @@ public:
         }
         shaded_sunalt_ = sun_alt;
 
+        // Scenery animation clock. The cached shader (clouds, water ripple,
+        // glints, stars, aurora, meteors) animates off this. During warp the
+        // sky reshades the WHOLE grid every frame (above) to keep the gradient
+        // coherent — but if the scenery clock kept advancing, every cloud/water
+        // cell would also change every frame, flooding the wire with thousands
+        // of cell updates that a slow/mobile terminal drops (visible as torn
+        // white streaks across the water + ground). So FREEZE the scenery clock
+        // while warping: only the sun-driven gradient moves, keeping the
+        // per-frame cell delta small enough for any terminal to apply cleanly.
+        float anim = c.anim;
+        if (c.warp_rate != 0.0) anim = frozen_anim_;
+        else                    frozen_anim_ = c.anim;
+
         // lightning: during a storm, fire brief bright flashes at random. A
         // flash is a fast attack + slow decay envelope keyed off epochs of the
         // free-running clock. `flash` is a global 0..~1 brightness this frame.
         float flash = 0.f;
         if (vz.storm > 0.05f) {
-            float T = c.anim / 2.6f;                 // ~one window every 2.6s
+            float T = anim / 2.6f;                   // ~one window every 2.6s
             float epoch = std::floor(T), prog = T - epoch;
             float seed = gfx::hash2(epoch * 5.3f, 1.9f);
             if (seed < 0.30f + 0.45f * vz.storm) {   // stormier = more frequent
@@ -295,7 +308,7 @@ public:
                     // with distance and are strongest at low (golden) sun.
                     {
                         float ang = std::atan2(py - sun_y, px - sun_x);
-                        float beams = gfx::fbm(ang * 2.4f + c.anim * 0.05f, ds * 0.012f);
+                        float beams = gfx::fbm(ang * 2.4f + anim * 0.05f, ds * 0.012f);
                         float shaft = gfx::smoothstep(0.45f, 0.85f, beams);
                         float reach = std::pow(gfx::smoothstep(PW * 0.6f, R * 2.f, ds), 1.3f);
                         float low   = gfx::smoothstep(18.f, 0.f, sun_alt);  // golden bias
@@ -336,13 +349,13 @@ public:
                             float ph  = L * 17.3f;
                             float spd = (L ? 0.10f : 0.16f);
                             // wavy lower edge of the curtain (in pixels)
-                            float wave = gfx::fbm(px * 0.018f + c.anim * spd + ph, 0.7f + ph);
+                            float wave = gfx::fbm(px * 0.018f + anim * spd + ph, 0.7f + ph);
                             float base = horizon_y * (0.34f + L * 0.10f) - wave * PH * 0.10f;
                             // vertical falloff above the wavy base = the sheet
                             float sheet = gfx::smoothstep(base, base - PH * 0.16f, py)
                                         * gfx::smoothstep(base - PH * 0.42f, base - PH * 0.16f, py);
                             // ray structure: bright vertical streaks across x
-                            float rays = 0.55f + 0.45f * gfx::fbm(px * 0.10f + c.anim * spd * 1.7f + ph, 3.f);
+                            float rays = 0.55f + 0.45f * gfx::fbm(px * 0.10f + anim * spd * 1.7f + ph, 3.f);
                             float a = sheet * rays * topband * aurora * (L ? 0.7f : 1.0f);
                             // green low, cyan/magenta toward the crest
                             float h = gfx::smoothstep(base, base - PH * 0.30f, py);
@@ -364,7 +377,7 @@ public:
                     float hs = gfx::hash2(gx * 1.7f, gy * 2.3f);
                     if (hs > 0.972f) {
                         float bright = (hs - 0.972f) / 0.028f;       // 0..1
-                        float tw = 0.55f + 0.45f * std::sin(c.anim * 2.5f + hs * 60.f);
+                        float tw = 0.55f + 0.45f * std::sin(anim * 2.5f + hs * 60.f);
                         // colour by a second hash: warm vs cool stars
                         float hc = gfx::hash2(gy * 3.1f, gx * 1.3f);
                         Col scol = gfx::mix(Col{1.0f,0.85f,0.7f}, Col{0.75f,0.85f,1.0f}, hc);
@@ -416,7 +429,7 @@ public:
                         };
                         // map a normalised node into pixel space (upper sky box),
                         // drifting slowly west over the night.
-                        float drift = std::fmod(c.anim * 0.004f, 1.f);
+                        float drift = std::fmod(anim * 0.004f, 1.f);
                         auto node_px = [&](const Star2& s) -> std::pair<float,float> {
                             float nx = std::fmod(s.x + 0.4f - drift + 1.f, 1.f);
                             float bx = 0.06f * PW + nx * 0.88f * PW;
@@ -429,7 +442,7 @@ public:
                             for (int i = 0; i < g.ns; ++i) {
                                 auto [sx, sy] = node_px(g.s[i]);
                                 float d = std::hypot(px - sx, py - sy);
-                                float tw = 0.6f + 0.4f * std::sin(c.anim*2.f + i*1.7f + g.s[i].x*40.f);
+                                float tw = 0.6f + 0.4f * std::sin(anim*2.f + i*1.7f + g.s[i].x*40.f);
                                 bestPt = std::max(bestPt, gfx::smoothstep(1.5f, 0.f, d) * tw);
                             }
                             // connecting lines: distance to each segment
@@ -455,7 +468,7 @@ public:
                     // epoch a 0..1 progress sweeps the head along the streak and
                     // a short bright tail trails behind it, fading out.
                     {
-                        float T = c.anim / 6.0f;
+                        float T = anim / 6.0f;
                         float epoch = std::floor(T);
                         float prog  = T - epoch;                       // 0..1 in epoch
                         float seed  = gfx::hash2(epoch * 12.9f, 7.1f);
@@ -502,7 +515,7 @@ public:
                     // stays dark.
                     if (band >= 0.01f || cirrus_band0 >= 0.01f) {
                     float day  = gfx::smoothstep(-6.f, 8.f, sun_alt);
-                    float wind = c.anim * 2.2f * vz.wind;   // drift scaled by real wind
+                    float wind = anim * 2.2f * vz.wind;     // drift scaled by real wind
 
                     // normalised cloud-space coords (decouple shape from term size)
                     float u = px * 0.030f, v = py * 0.075f;
@@ -653,27 +666,27 @@ public:
                 float depth = std::clamp((py - shore_y) / std::max(1.f, float(PH) - shore_y), 0.f, 1.f);
                 // ripple: a travelling wave perturbs which sky row we mirror,
                 // stronger toward the viewer (foreground) so near water is choppier.
-                float ripple = std::sin(py * 0.55f - c.anim * 1.6f) * (0.6f + 2.2f * depth)
-                             + gfx::fbm(px * 0.10f + c.anim * 0.3f, py * 0.20f) * 1.5f * depth;
+                float ripple = std::sin(py * 0.55f - anim * 1.6f) * (0.6f + 2.2f * depth)
+                             + gfx::fbm(px * 0.10f + anim * 0.3f, py * 0.20f) * 1.5f * depth;
                 float mir_y = std::clamp(2.f * shore_y - py + ripple, 0.f, shore_y - 1.f);
                 float mv = 1.f - mir_y / float(PH);
                 Col water = sky_palette(sun_alt, mv);
 
                 // reflected sun glint: a wavering bright column under the sun
                 if (sun_alt > -3.f) {
-                    float gx = std::abs(px - sun_x + std::sin(py * 0.8f - c.anim * 2.f) * 2.5f * depth);
+                    float gx = std::abs(px - sun_x + std::sin(py * 0.8f - anim * 2.f) * 2.5f * depth);
                     float glint = gfx::smoothstep(PW * 0.10f, 0.f, gx)
-                                * (0.35f + 0.65f * std::abs(std::sin(py * 0.9f - c.anim * 3.f)));
+                                * (0.35f + 0.65f * std::abs(std::sin(py * 0.9f - anim * 3.f)));
                     Col sc = gfx::mix(Col{1.f,0.7f,0.4f}, Col{1.f,0.92f,0.7f},
                                       gfx::smoothstep(0.f, 16.f, sun_alt));
                     water = gfx::add(water, gfx::scale(sc, glint * (0.4f + 0.4f*day)));
                 }
                 // reflected moon glint at night
                 if (sun_alt < 4.f) {
-                    float gx = std::abs(px - moon_x + std::sin(py * 0.7f - c.anim * 1.6f) * 2.0f * depth);
+                    float gx = std::abs(px - moon_x + std::sin(py * 0.7f - anim * 1.6f) * 2.0f * depth);
                     float mvis = gfx::smoothstep(2.f, -6.f, sun_alt);
                     float glint = gfx::smoothstep(PW * 0.06f, 0.f, gx)
-                                * (0.3f + 0.7f * std::abs(std::sin(py * 0.8f - c.anim * 2.2f)));
+                                * (0.3f + 0.7f * std::abs(std::sin(py * 0.8f - anim * 2.2f)));
                     water = gfx::add(water, gfx::scale(Col{0.80f,0.85f,0.98f}, glint * 0.5f * mvis));
                 }
                 // tint deeper water toward a cool teal + darken with depth so
@@ -854,9 +867,9 @@ public:
         if (sun_alt > 2.f) {                      // only in real daylight
             float day = gfx::smoothstep(2.f, 12.f, sun_alt);
             // flock anchor sweeps left→right over ~80s, gently bobbing.
-            float t = std::fmod(c.anim, 80.f) / 80.f;
+            float t = std::fmod(anim, 80.f) / 80.f;
             float ax = (t * 1.3f - 0.15f) * r.w;            // cells
-            float ay = r.h * 0.18f + std::sin(c.anim * 0.25f) * (r.h * 0.04f);
+            float ay = r.h * 0.18f + std::sin(anim * 0.25f) * (r.h * 0.04f);
             // formation: lead bird + four wing birds in a shallow V.
             const float off[5][2] = {{0,0},{-2,0.8f},{2,0.8f},{-4,1.6f},{4,1.6f}};
             Col ink = gfx::scale(Col{0.05f,0.06f,0.10f}, 1.f); // near-black silhouette
@@ -865,7 +878,7 @@ public:
                 int by = (int)std::lround(ay + o[1]);
                 if (bx < 1 || bx >= r.w - 1 || by < 1 || by >= r.h - 1) continue;
                 // gentle wing-flap: ‿ (relaxed) vs ⌃-ish via two glyphs.
-                bool up = std::sin(c.anim * 6.f + o[0] * 1.7f) > 0.f;
+                bool up = std::sin(anim * 6.f + o[0] * 1.7f) > 0.f;
                 char32_t g = up ? U'˄' : U'ˇ';   // ˄ wings up  /  ˇ wings down
                 size_t ci = (size_t(by) * r.w + bx) * 2;
                 Col sky_here = ci + 1 < cache_.size()
@@ -899,7 +912,7 @@ public:
                 Col add{0,0,0};
                 if (py > horizon + 2.f) return add;          // no precip into the ground
                 if (w.rain > 0.01f) {
-                    float fall = c.anim * 38.f;              // drops/sec descent
+                    float fall = anim * 38.f;               // drops/sec descent
                     float col_x = px - py * slant;           // slanted columns
                     float lane  = std::floor(col_x * 0.5f);
                     float seed  = gfx::hash2(lane, 11.3f);
@@ -914,9 +927,9 @@ public:
                     }
                 }
                 if (w.snow > 0.01f) {
-                    float fall = c.anim * 9.f;
+                    float fall = anim * 9.f;
                     // flakes sway sideways as they fall (sinusoidal drift)
-                    float drift = std::sin((py * 0.20f) + c.anim * 1.2f) * 2.0f;
+                    float drift = std::sin((py * 0.20f) + anim * 1.2f) * 2.0f;
                     float fx = px + drift;
                     float cellx = std::floor(fx * 0.5f);
                     float row   = std::floor((py + fall) * 0.4f);
@@ -946,7 +959,7 @@ public:
                         auto fogv = [&](float py){
                             float nearH = gfx::smoothstep(horizon * 0.30f, horizon, py)
                                         * gfx::smoothstep(horizon + PHv*0.18f, horizon*0.7f, py);
-                            float n = gfx::fbm(px*0.05f - c.anim*0.06f, py*0.05f + 3.f);
+                            float n = gfx::fbm(px*0.05f - anim*0.06f, py*0.05f + 3.f);
                             return std::clamp(w.fog * (0.45f + 0.55f*nearH) * (0.6f+0.5f*n), 0.f, 0.9f);
                         };
                         f0 = fogv(py0); f1 = fogv(py1);
@@ -971,6 +984,7 @@ private:
     bool dirty_ = false;       // full reshade requested (instant response to input)
     WeatherViz viz_{};         // eased weather dials (cross-fades between codes)
     float last_anim_ = 0.f;    // previous frame clock, for frame-rate-independent ease
+    float frozen_anim_ = 0.f;  // scenery anim clock, held still while warping
     float shaded_cloud_ = -1.f, shaded_storm_ = -1.f;  // last values baked into cache_
     float shaded_sunalt_ = -999.f;                     // sun altitude baked into cache_
 };
