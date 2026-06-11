@@ -197,13 +197,7 @@ public:
             // 4x4 Bayer matrix value in 0..1, centered to -0.5..0.5
             static const int B[16] = { 0, 8, 2,10, 12, 4,14, 6,
                                        3,11, 1, 9, 15, 7,13, 5 };
-            // Index the VERTICAL axis by CELL row (py/2), not the raw sub-pixel
-            // row, so a cell's top and bottom sub-pixels get the SAME dither
-            // offset. That keeps the spatial 4x4 stipple across cells while
-            // making each cell internally uniform — so Painter::cell() can emit
-            // a gap-safe full block (█) instead of an upper-half block (▀)
-            // whose background half some terminals drop into dark stripes.
-            int bx = ((int)px) & 3, by = (((int)py) >> 1) & 3;
+            int bx = ((int)px) & 3, by = ((int)py) & 3;
             float d = (B[by * 4 + bx] / 16.f) - 0.5f;
             float amp = (1.f / levels) * 0.9f;
             return { c0.r + d * amp, c0.g + d * amp, c0.b + d * amp };
