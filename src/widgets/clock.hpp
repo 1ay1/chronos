@@ -90,8 +90,13 @@ public:
             ss_cells_.clear();
             CaptureSink cap{p.cols(), p.rows(), &ss_cells_};
             auto skybg = [&](int, int cy) { return sky_bg(sun_alt, cy, ph); };
+            // seconds get their own tinted ink — warm ember by day, cool ice by
+            // night — so they read as a deliberate accent next to the big HH:MM
+            // instead of a smaller clone of it.
+            Col ss_top = night ? Col{0.85f, 0.92f, 1.0f} : Col{0.16f, 0.09f, 0.04f};
+            Col ss_bot = night ? Col{0.55f, 0.70f, 1.0f} : Col{0.42f, 0.20f, 0.07f};
             font::draw_text(cap, endx + 2.6f, secs_y, secs_q, ss, contour, skybg, 0.22f);
-            font::draw_text_grad(cap, endx + 2.6f, secs_y, secs_q, ss, top_ink, bot_ink,
+            font::draw_text_grad(cap, endx + 2.6f, secs_y, secs_q, ss, ss_top, ss_bot,
                                  skybg, 0.135f);
         }
         // Replay the cached glyph cells, re-compositing each onto the LIVE sky.
@@ -144,9 +149,13 @@ private:
     void date_line(Painter& p, int x, int y, const Ctx& c,
                    const char* const* WD, const char* const* MON,
                    Col ink, BgFn&& bg) {
-        // A light scrim over the LIVE sky (clouds included) keeps the date
-        // readable without painting a stale flat-colour box under the text.
+        // Weekday rides a solid accent CHIP (warm by day, cool accent by night,
+        // dark ink — same treatment as the calendar section titles), and the
+        // date follows on a soft live-sky scrim. Reads as designed type, not a
+        // highlighted text box.
         float sun_alt = (float)c.sun.altitude;
+        bool night = sun_alt < -6.f;
+        const Theme& th = c.theme;
         auto soft = [&](int cx, int cy) {
             Col top, bot;
             Col s = sky_live_cell(cx, cy, top, bot)
@@ -154,10 +163,20 @@ private:
                   : sky_bg(sun_alt, cy, p.rows() * 2);
             return gfx::mix(s, Col{0,0,0}, 0.12f);
         };
-        std::string d = std::format("{}  \u00b7  {} {}, {}",
-            WD[c.lt.tm_wday % 7], MON[c.lt.tm_mon + 1], c.lt.tm_mday,
-            c.lt.tm_year + 1900);
-        p.text_over(x + 1, y, d, ink, soft, true);
+
+        // ── weekday chip ──
+        std::string wd = WD[c.lt.tm_wday % 7];
+        Col chip = night ? th.accent : th.warm;
+        Col cink{0.04f, 0.04f, 0.06f};
+        int cw = (int)wd.size() + 2;
+        for (int i = 0; i < cw; ++i)
+            p.text(x + 1 + i, y, " ", cink, chip);
+        p.text(x + 2, y, wd, cink, chip, true);
+
+        // ── date text after the chip ──
+        std::string d = std::format("  {} {}, {}",
+            MON[c.lt.tm_mon + 1], c.lt.tm_mday, c.lt.tm_year + 1900);
+        p.text_over(x + 1 + cw, y, d, ink, soft, true);
         (void)bg;
     }
     int size_ = 0;   // 0 huge, 1 big, 2 compact
