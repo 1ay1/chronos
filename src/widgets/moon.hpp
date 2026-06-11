@@ -24,11 +24,27 @@ public:
         p.text(in.x + 1, in.y, "\u263e MOON", th.cool, th.panel_bg, true);
 
         // ── draw the moon disc (left side) ──────────────────────────────────
-        // radius in sub-pixels; disc occupies roughly the card height.
-        int disc_rows = r.h - 4;
-        float R = std::min(disc_rows * 2 * 0.45f, (r.w - 2) * 0.9f);
-        float cxp = in.x + R / 2.f + 1.f;             // centre x in cells
-        float cyp = (in.y + 1) * 2 + R;               // centre y in sub-pixels
+        // The disc lives in a square-ish region on the left of the card. Its
+        // radius is bounded by BOTH the available height (in sub-pixels) and the
+        // left-column width (in cells, ×2 for sub-pixel aspect), so it stays a
+        // true circle no matter the card's proportions instead of a squished
+        // blob. Centre it in that region.
+        int   inner_rows = in.h;                       // cell rows inside the card
+        float avail_h    = inner_rows * 2.f;           // sub-pixels of height
+        // reserve the right ~55% of the card for stats on a wide card; on a
+        // narrow card the disc may use most of the width and stats stack below.
+        bool  wide       = in.w >= 24;
+        float disc_cols  = wide ? std::min((float)in.w * 0.42f, 14.f)
+                                : (float)in.w - 2.f;
+        // radius: fit inside the height (leave a 1-subpix margin top/bottom) and
+        // inside disc_cols (×2 because 1 cell = 2 sub-pixels wide in our aspect).
+        // R is in SUB-PIXEL units; x is scaled ×2 below so the disc is a true
+        // circle despite cells being twice as tall as wide.
+        float R = std::min(avail_h * 0.5f - 1.f, disc_cols * 2.f);
+        R = std::max(R, 5.f);
+        // centre of the disc, in sub-pixel space (x also in sub-pixels = cell*2)
+        float cxp = (in.x + 1.f) * 2.f + R;            // 1-cell left margin
+        float cyp = in.y * 2.f + avail_h * 0.5f;       // vertically centred
         float frac = (float)c.moon.frac;              // 0 new .. .5 full .. 1 new
         // illuminated fraction & which limb is lit
         float illum = (float)c.moon.illum;            // 0..1
@@ -43,7 +59,8 @@ public:
         float earthshine = gfx::smoothstep(0.45f, 0.02f, illum);  // 0 full .. 1 new
 
         auto moon_at = [&](float px, float py) -> Col {
-            float dx = (px - cxp), dy = (py - cyp) * 0.5f;  // *0.5 → sub-pixel aspect
+            // px,py are in SUB-PIXEL space here (caller passes cell*2 for x).
+            float dx = (px - cxp), dy = (py - cyp);
             float d = std::sqrt(dx * dx + dy * dy);
             if (d > R + 1.5f) return th.panel_bg;
             if (d > R) return gfx::mix(th.panel_bg, halo, gfx::smoothstep(R + 1.5f, R, d));
@@ -67,13 +84,15 @@ public:
             // believable lunar face without looking like generic static.
             float litness = inside_lit ? 1.f : (t * 0.5f + earthshine * 0.4f);
             if (litness > 0.05f) {
-                // maria: broad dark patches
-                float mare = gfx::fbm(px * 0.45f + 3.f, py * 0.22f + 1.f);
-                blended = gfx::mix(blended, gfx::scale(blended, 0.80f),
-                                   gfx::smoothstep(0.52f, 0.82f, mare) * 0.55f * litness);
+                // maria: broad dark patches (use normalised disc coords so the
+                // pattern is stable regardless of disc size)
+                float un = dx / R, vn = dy / R;
+                float mare = gfx::fbm(un * 3.4f + 3.f, vn * 3.4f + 1.f);
+                blended = gfx::mix(blended, gfx::scale(blended, 0.78f),
+                                   gfx::smoothstep(0.50f, 0.82f, mare) * 0.55f * litness);
                 // craters: small bright/dark speckles with a rim highlight
-                float cr = gfx::fbm(px * 1.4f + 9.f, py * 0.8f + 5.f);
-                float crater = gfx::smoothstep(0.74f, 0.9f, cr);
+                float cr = gfx::fbm(un * 9.0f + 9.f, vn * 9.0f + 5.f);
+                float crater = gfx::smoothstep(0.72f, 0.90f, cr);
                 blended = gfx::add(blended, gfx::scale(Col{0.10f,0.11f,0.16f},
                                    crater * 0.6f * litness));
             }
@@ -98,32 +117,48 @@ public:
             for (int sy = 0; sy < SSy; ++sy) {
                 float sub_y = sub_y_center + ((sy + 0.5f) / SSy - 0.5f);
                 for (int s = 0; s < SSx; ++s) {
-                    Col c0 = moon_at(xl + (s + 0.5f) / SSx, sub_y);
+                    // xl is the cell centre in sub-pixel units; a cell spans 2
+                    // sub-pixels, so spread the samples across ±1.
+                    float sub_x = xl + ((s + 0.5f) / SSx - 0.5f) * 2.f;
+                    Col c0 = moon_at(sub_x, sub_y);
                     a.r += c0.r; a.g += c0.g; a.b += c0.b;
                 }
             }
             return gfx::scale(a, 1.f / (SSx * SSy));
         };
-        for (int cy = in.y + 1; cy < in.bottom() - 1; ++cy)
-            for (int cx = in.x; cx < (int)(cxp + R / 2.f + 2); ++cx) {
+        for (int cy = in.y; cy < in.bottom(); ++cy)
+            for (int cx = in.x; cx < (int)((cxp + R) / 2.f + 2); ++cx) {
                 if (cx >= in.right()) break;
-                p.cell(cx, cy, msample(cx + 0.f, cy * 2 + 0.5f),
-                               msample(cx + 0.f, cy * 2 + 1.5f));
+                // x passed in sub-pixel units (cell*2); the two emitted half-
+                // cells sample the upper and lower sub-pixel rows.
+                p.cell(cx, cy, msample(cx * 2.f + 1.f, cy * 2 + 0.5f),
+                               msample(cx * 2.f + 1.f, cy * 2 + 1.5f));
             }
 
         // ── stats (right side) ──────────────────────────────────────────────
-        int tx = (int)(cxp + R / 2.f + 3);
+        int disc_right = (int)((cxp + R) / 2.f + 2);   // cell just past the disc
+        int tx = disc_right + 1;
         if (tx >= in.right() - 6) tx = in.x + 1;     // narrow card → stack below
-        int ty = in.y + 2;
-        p.text(tx, ty,     c.moon.glyph + " " + c.moon.name, th.text, th.panel_bg, true);
-        p.text(tx, ty + 1, std::format("{:.0f}% illuminated", illum * 100),
+        int ty = in.y + 1;
+        int colw = in.right() - tx;                  // available text width
+        auto clip = [&](std::string s) {
+            while ((int)gfx::utf8_cols(s) > colw && !s.empty()) {
+                // drop trailing UTF-8 byte(s) of the last codepoint
+                size_t i = s.size() - 1;
+                while (i > 0 && (s[i] & 0xC0) == 0x80) --i;
+                s.erase(i);
+            }
+            return s;
+        };
+        p.text(tx, ty,     clip(c.moon.glyph + " " + c.moon.name), th.text, th.panel_bg, true);
+        p.text(tx, ty + 1, clip(std::format("{:.0f}% lit", illum * 100)),
                th.text_dim, th.panel_bg);
         // illumination gauge
-        p.gauge(tx, ty + 2, std::min(in.right() - tx - 1, 14),
+        p.gauge(tx, ty + 2, std::max(4, std::min(colw, 14)),
                 illum, th.cool, th.panel_border, th.panel_bg);
         // age in days
-        p.text(tx, ty + 3, std::format("age {:.1f}d \u00b7 {}",
-               c.moon.age_days, waxing ? "waxing" : "waning"),
+        p.text(tx, ty + 3, clip(std::format("{:.1f}d · {}",
+               c.moon.age_days, waxing ? "wax" : "wane")),
                th.text_dim, th.panel_bg);
     }
 };
