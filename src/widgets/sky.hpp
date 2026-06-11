@@ -118,6 +118,16 @@ public:
             std::abs(vz.storm - shaded_storm_) > 0.02f) {
             dirty_ = true; shaded_cloud_ = vz.cloud; shaded_storm_ = vz.storm;
         }
+        // During time-warp the sun altitude marches fast, so the amortized
+        // row-sweep (which reshades only a slice of rows per frame) would leave
+        // the grid a patchwork of rows shaded at DIFFERENT sun altitudes — a
+        // visible horizontal tear/banding that drifts down the screen. When the
+        // altitude moves more than a hair between frames (warp, or jump-to-now),
+        // force a coherent full reshade so the whole sky updates in one frame.
+        if (c.warp_rate != 0.0 || std::abs(sun_alt - shaded_sunalt_) > 0.15f) {
+            dirty_ = true;
+        }
+        shaded_sunalt_ = sun_alt;
 
         // lightning: during a storm, fire brief bright flashes at random. A
         // flash is a fast attack + slow decay envelope keyed off epochs of the
@@ -962,6 +972,7 @@ private:
     WeatherViz viz_{};         // eased weather dials (cross-fades between codes)
     float last_anim_ = 0.f;    // previous frame clock, for frame-rate-independent ease
     float shaded_cloud_ = -1.f, shaded_storm_ = -1.f;  // last values baked into cache_
+    float shaded_sunalt_ = -999.f;                     // sun altitude baked into cache_
 };
 
 // helper other widgets use to scrim text legibly over the sky
