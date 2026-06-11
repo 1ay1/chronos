@@ -52,8 +52,8 @@ public:
         Col sun_col   = daytime ? gfx::hex(0xffd479) : gfx::hex(0x7681b4);
         Col sky_lo = gfx::mix(th.panel_bg, gfx::hex(0x1b2540), 0.5f);   // arc fill tint
 
-        auto shade = [&](float px, float py) -> Col {
-            Col col = th.panel_bg;
+        auto shade = [&](float px, float py, Col base) -> Col {
+            Col col = base;
             float t = (px - arc_x0) / std::max(1.f, (float)arc_w);
             float ay = base_y - std::sin(std::clamp(t,0.f,1.f) * 3.14159f) * (base_y - top_y);
 
@@ -105,22 +105,26 @@ public:
         // shader samples per emitted half-cell) is cheap yet gives near-vector
         // quality — sub-pixel disc/arc edges resolve as clean gradients.
         constexpr int SSx = 8, SSy = 6;
-        auto srow = [&](float xl, float sub_y_center) {
+        auto srow = [&](float xl, float sub_y_center, Col base) {
             Col a{0,0,0};
             for (int sy = 0; sy < SSy; ++sy) {
                 // spread sub-rows across the ±0.5 half-cell band around center
                 float sub_y = sub_y_center + ((sy + 0.5f) / SSy - 0.5f);
                 for (int s = 0; s < SSx; ++s) {
-                    Col c0 = shade(xl + (s + 0.5f) / SSx, sub_y);
+                    Col c0 = shade(xl + (s + 0.5f) / SSx, sub_y, base);
                     a.r += c0.r; a.g += c0.g; a.b += c0.b;
                 }
             }
             return gfx::scale(a, 1.f / (SSx * SSy));
         };
         for (int cy = in.y + 1; cy < in.bottom() - 2; ++cy)
-            for (int cx = in.x; cx < in.right(); ++cx)
-                p.cell(cx, cy, srow(float(cx), cy * 2 + 0.5f),
-                               srow(float(cx), cy * 2 + 1.5f));
+            for (int cx = in.x; cx < in.right(); ++cx) {
+                // composite over the frosted-glass fill already in this cell so
+                // the arc & disc glow through the glass instead of flat black.
+                Col base = p.bg_at(cx, cy, th.panel_bg);
+                p.cell(cx, cy, srow(float(cx), cy * 2 + 0.5f, base),
+                               srow(float(cx), cy * 2 + 1.5f, base));
+            }
 
         // endpoint labels just above the horizon line
         int label_y = in.bottom() - 3;

@@ -45,6 +45,12 @@ this is genuine per-pixel graphics, not box-drawing.
 - **Sunrise / sunset / daylight length** and the live **sun altitude**.
 - Toggleable floating **calendar** (`c`) and **world-clocks** (`w`) panels.
 
+The dashboard cards (sun arc, moon, weather) are **frosted glass**, not flat
+boxes: each pane reads the living sky painted behind it, blurs and desaturates
+it, and lets the colour and motion bleed through — so the sun's arc and the
+phase-shaded moon disc glow *inside* the glass, lit from above with a soft inner
+sheen and a bright top edge, floating over the scene on a soft drop shadow.
+
 ## Time warp
 
 Want to *watch* a full day go by? Press `+` to fast-forward the sky (each press

@@ -177,20 +177,87 @@ public:
     }
 
     // -- rounded panel (frosted card) ----------------------------------------
+    // A translucent "frosted glass" pane floating over the sky: instead of
+    // stamping an opaque fill, it reads the scene already painted behind the
+    // card, blurs + darkens + desaturates it toward `bg`, and lets some of the
+    // sky's colour & motion bleed through. A bright top-edge highlight and a
+    // soft top-down inner glow sell it as a real sheet of glass catching light.
     void panel(int x, int y, int w, int h, Col bg, Col border) {
         shadow(x, y, w, h);   // soft drop shadow over whatever sits behind
-        fill_cells(x, y, w, h, bg);
-        uint16_t bs = text_style(border, bg);
+        frost(x, y, w, h, bg);
+        uint16_t bs = text_style(gfx::mix(border, Col{0.7f,0.78f,0.95f}, 0.15f),
+                                 frost_at(x, y, bg));
         for (int xx = x + 1; xx < x + w - 1; ++xx) {
-            cv_.set(xx, y, U'\u2500', bs);
-            cv_.set(xx, y + h - 1, U'\u2500', bs);
+            cv_.set(xx, y, U'\u2500', text_style(
+                gfx::mix(border, Col{0.85f,0.9f,1.0f}, 0.30f), frost_at(xx, y, bg)));
+            cv_.set(xx, y + h - 1, U'\u2500', text_style(border, frost_at(xx, y+h-1, bg)));
         }
         for (int yy = y + 1; yy < y + h - 1; ++yy) {
-            cv_.set(x, yy, U'\u2502', bs);
-            cv_.set(x + w - 1, yy, U'\u2502', bs);
+            cv_.set(x, yy, U'\u2502', text_style(border, frost_at(x, yy, bg)));
+            cv_.set(x + w - 1, yy, U'\u2502', text_style(border, frost_at(x+w-1, yy, bg)));
         }
         cv_.set(x, y, U'\u256d', bs);              cv_.set(x + w - 1, y, U'\u256e', bs);
-        cv_.set(x, y + h - 1, U'\u2570', bs);      cv_.set(x + w - 1, y + h - 1, U'\u256f', bs);
+        cv_.set(x, y + h - 1, U'\u2570', text_style(border, frost_at(x,y+h-1,bg)));
+        cv_.set(x + w - 1, y + h - 1, U'\u256f', text_style(border, frost_at(x+w-1,y+h-1,bg)));
+    }
+
+    // sample what colour the frosted glass produces at one cell (used so the
+    // border glyphs sit on the same tinted backdrop as the fill).
+    Col frost_at(int cx, int cy, Col bg) {
+        if (cx < 0 || cy < 0 || cx >= w_ || cy >= h_) return bg;
+        maya::Cell cell = maya::Cell::unpack(cv_.get_packed(cx, cy));
+        maya::Style s = pool_.get(cell.style_id);
+        Col behind = bg;
+        if (s.bg && s.bg->kind() == maya::Color::Kind::Rgb)
+            behind = {s.bg->r()/255.f, s.bg->g()/255.f, s.bg->b()/255.f};
+        // desaturate the sky slightly (frosted = scattered) then darken toward bg
+        float lum = 0.299f*behind.r + 0.587f*behind.g + 0.114f*behind.b;
+        Col desat = gfx::mix(behind, Col{lum,lum,lum}, 0.35f);
+        return gfx::mix(bg, desat, 0.34f);   // ~34% of the sky bleeds through
+    }
+
+    // paint the translucent glass fill: read the scene behind each cell, blur a
+    // little (box of the cell + its 4 neighbours), composite the tint, then add
+    // a top-down inner glow so the pane looks lit from above.
+    void frost(int x, int y, int w, int h, Col bg) {
+        auto skybg = [&](int cx, int cy) -> Col {
+            if (cx < 0 || cy < 0 || cx >= w_ || cy >= h_) return bg;
+            maya::Cell cell = maya::Cell::unpack(cv_.get_packed(cx, cy));
+            maya::Style s = pool_.get(cell.style_id);
+            if (s.bg && s.bg->kind() == maya::Color::Kind::Rgb)
+                return {s.bg->r()/255.f, s.bg->g()/255.f, s.bg->b()/255.f};
+            return bg;
+        };
+        for (int yy = y; yy < y + h; ++yy) {
+            float vt = float(yy - y) / std::max(1, h - 1);   // 0 top .. 1 bottom
+            for (int xx = x; xx < x + w; ++xx) {
+                // frosted blur: average the cell and its neighbours
+                Col b = skybg(xx, yy);
+                Col n = gfx::add(gfx::add(skybg(xx-1,yy), skybg(xx+1,yy)),
+                                 gfx::add(skybg(xx,yy-1), skybg(xx,yy+1)));
+                Col blur{ (b.r*2.f + n.r) / 6.f, (b.g*2.f + n.g) / 6.f, (b.b*2.f + n.b) / 6.f };
+                // desaturate then composite toward the glass tint
+                float lum = 0.299f*blur.r + 0.587f*blur.g + 0.114f*blur.b;
+                Col desat = gfx::mix(blur, Col{lum,lum,lum}, 0.35f);
+                Col glass = gfx::mix(bg, desat, 0.34f);
+                // top-down inner glow: brighter sheen near the top edge, fading
+                float sheen = (1.f - vt) * (1.f - vt) * 0.10f;
+                glass = gfx::add(glass, Col{sheen, sheen, sheen*1.15f});
+                cv_.set(xx, yy, U'\u2580', cell_style(glass, glass));
+            }
+        }
+    }
+
+    // sample the current background colour of a cell (e.g. the frosted-glass
+    // fill a panel just laid down), so a widget's graphics can composite over
+    // the glass instead of re-stamping an opaque base.
+    Col bg_at(int cx, int cy, Col fallback) {
+        if (cx < 0 || cy < 0 || cx >= w_ || cy >= h_) return fallback;
+        maya::Cell cell = maya::Cell::unpack(cv_.get_packed(cx, cy));
+        maya::Style s = pool_.get(cell.style_id);
+        if (s.bg && s.bg->kind() == maya::Color::Kind::Rgb)
+            return {s.bg->r()/255.f, s.bg->g()/255.f, s.bg->b()/255.f};
+        return fallback;
     }
 
     // -- soft drop shadow under a panel --------------------------------------

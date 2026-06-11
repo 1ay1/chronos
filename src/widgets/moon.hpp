@@ -58,12 +58,12 @@ public:
         Col earth = gfx::hex(0x232842);
         float earthshine = gfx::smoothstep(0.45f, 0.02f, illum);  // 0 full .. 1 new
 
-        auto moon_at = [&](float px, float py) -> Col {
+        auto moon_at = [&](float px, float py, Col base) -> Col {
             // px,py are in SUB-PIXEL space here (caller passes cell*2 for x).
             float dx = (px - cxp), dy = (py - cyp);
             float d = std::sqrt(dx * dx + dy * dy);
-            if (d > R + 1.5f) return th.panel_bg;
-            if (d > R) return gfx::mix(th.panel_bg, halo, gfx::smoothstep(R + 1.5f, R, d));
+            if (d > R + 1.5f) return base;
+            if (d > R) return gfx::mix(base, halo, gfx::smoothstep(R + 1.5f, R, d));
             // inside disc: terminator. x' normalised -1..1 across the disc.
             float xn = dx / (R + 1e-3f);
             // The terminator is an ellipse whose width = cos(phase angle).
@@ -112,7 +112,7 @@ public:
         // rather than stair-stepped. The disc is small, so a dense box filter is
         // cheap. 36 shader samples per emitted half-cell.
         constexpr int SSx = 6, SSy = 6;
-        auto msample = [&](float xl, float sub_y_center) -> Col {
+        auto msample = [&](float xl, float sub_y_center, Col base) -> Col {
             Col a{0,0,0};
             for (int sy = 0; sy < SSy; ++sy) {
                 float sub_y = sub_y_center + ((sy + 0.5f) / SSy - 0.5f);
@@ -120,7 +120,7 @@ public:
                     // xl is the cell centre in sub-pixel units; a cell spans 2
                     // sub-pixels, so spread the samples across ±1.
                     float sub_x = xl + ((s + 0.5f) / SSx - 0.5f) * 2.f;
-                    Col c0 = moon_at(sub_x, sub_y);
+                    Col c0 = moon_at(sub_x, sub_y, base);
                     a.r += c0.r; a.g += c0.g; a.b += c0.b;
                 }
             }
@@ -129,10 +129,11 @@ public:
         for (int cy = in.y; cy < in.bottom(); ++cy)
             for (int cx = in.x; cx < (int)((cxp + R) / 2.f + 2); ++cx) {
                 if (cx >= in.right()) break;
-                // x passed in sub-pixel units (cell*2); the two emitted half-
-                // cells sample the upper and lower sub-pixel rows.
-                p.cell(cx, cy, msample(cx * 2.f + 1.f, cy * 2 + 0.5f),
-                               msample(cx * 2.f + 1.f, cy * 2 + 1.5f));
+                // composite over the frosted-glass fill already in the cell so
+                // the disc & halo glow through the glass instead of flat black.
+                Col base = p.bg_at(cx, cy, th.panel_bg);
+                p.cell(cx, cy, msample(cx * 2.f + 1.f, cy * 2 + 0.5f, base),
+                               msample(cx * 2.f + 1.f, cy * 2 + 1.5f, base));
             }
 
         // ── stats (right side) ──────────────────────────────────────────────
