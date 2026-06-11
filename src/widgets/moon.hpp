@@ -37,6 +37,10 @@ public:
         Col lit  = gfx::hex(0xdfe6ff);
         Col dark = gfx::hex(0x1a1d2e);
         Col halo = gfx::hex(0x2a2f4a);
+        // earthshine: the dark side is faintly lit by light bouncing off Earth,
+        // strongest near new moon (a thin lit crescent + a ghostly full disc).
+        Col earth = gfx::hex(0x232842);
+        float earthshine = gfx::smoothstep(0.45f, 0.02f, illum);  // 0 full .. 1 new
 
         auto moon_at = [&](float px, float py) -> Col {
             float dx = (px - cxp), dy = (py - cyp) * 0.5f;  // *0.5 → sub-pixel aspect
@@ -51,28 +55,60 @@ public:
             bool inside_lit;
             if (waxing) inside_lit = (xn > -k);       // lit grows from right
             else        inside_lit = (xn <  k);       // lit shrinks from right
-            // edge smoothing along the terminator
+            // edge smoothing along the terminator (tight, AA against the fine
+            // supersample grid so the crescent edge reads as a clean curve)
             float edge = waxing ? (xn + k) : (k - xn);
-            float t = gfx::smoothstep(-0.08f, 0.08f, edge);
-            Col base = inside_lit ? lit : dark;
-            Col blended = gfx::mix(dark, lit, t);
-            // subtle mare texture on the lit side
-            if (inside_lit || t > 0.3f) {
-                float n = gfx::fbm(px * 0.6f + 3.f, py * 0.3f);
-                blended = gfx::mix(blended, gfx::scale(blended, 0.82f),
-                                   gfx::smoothstep(0.55f, 0.8f, n) * 0.5f);
+            float t = gfx::smoothstep(-0.05f, 0.05f, edge);
+            // dark side carries a faint earthshine glow near new moon
+            Col darkside = gfx::mix(dark, earth, earthshine);
+            Col blended = gfx::mix(darkside, lit, t);
+            // surface detail: large smooth maria (dark seas) + small bright
+            // craters, both stronger on the lit side. Two noise octaves give a
+            // believable lunar face without looking like generic static.
+            float litness = inside_lit ? 1.f : (t * 0.5f + earthshine * 0.4f);
+            if (litness > 0.05f) {
+                // maria: broad dark patches
+                float mare = gfx::fbm(px * 0.45f + 3.f, py * 0.22f + 1.f);
+                blended = gfx::mix(blended, gfx::scale(blended, 0.80f),
+                                   gfx::smoothstep(0.52f, 0.82f, mare) * 0.55f * litness);
+                // craters: small bright/dark speckles with a rim highlight
+                float cr = gfx::fbm(px * 1.4f + 9.f, py * 0.8f + 5.f);
+                float crater = gfx::smoothstep(0.74f, 0.9f, cr);
+                blended = gfx::add(blended, gfx::scale(Col{0.10f,0.11f,0.16f},
+                                   crater * 0.6f * litness));
             }
-            // limb darkening
-            blended = gfx::scale(blended, 1.f - gfx::smoothstep(R * 0.6f, R, d) * 0.25f);
-            (void)base;
+            // limb darkening: a soft falloff toward the edge gives the disc a
+            // spherical, photographic roundness instead of a flat coin.
+            blended = gfx::scale(blended, 1.f - gfx::smoothstep(R * 0.55f, R, d) * 0.30f);
+            // bright rim catch on the sunlit limb for a touch of specular pop
+            if (inside_lit) {
+                float rim = gfx::smoothstep(R * 0.86f, R, d);
+                blended = gfx::add(blended, gfx::scale(Col{0.10f,0.12f,0.20f}, rim * 0.5f));
+            }
             return blended;
         };
 
+        // High-resolution render: supersample both axes (matching the sun arc)
+        // so the terminator curve, limb, and craters read crisp and round
+        // rather than stair-stepped. The disc is small, so a dense box filter is
+        // cheap. 36 shader samples per emitted half-cell.
+        constexpr int SSx = 6, SSy = 6;
+        auto msample = [&](float xl, float sub_y_center) -> Col {
+            Col a{0,0,0};
+            for (int sy = 0; sy < SSy; ++sy) {
+                float sub_y = sub_y_center + ((sy + 0.5f) / SSy - 0.5f);
+                for (int s = 0; s < SSx; ++s) {
+                    Col c0 = moon_at(xl + (s + 0.5f) / SSx, sub_y);
+                    a.r += c0.r; a.g += c0.g; a.b += c0.b;
+                }
+            }
+            return gfx::scale(a, 1.f / (SSx * SSy));
+        };
         for (int cy = in.y + 1; cy < in.bottom() - 1; ++cy)
             for (int cx = in.x; cx < (int)(cxp + R / 2.f + 2); ++cx) {
                 if (cx >= in.right()) break;
-                p.cell(cx, cy, moon_at(cx + 0.5f, cy * 2 + 0.f),
-                               moon_at(cx + 0.5f, cy * 2 + 1.f));
+                p.cell(cx, cy, msample(cx + 0.f, cy * 2 + 0.5f),
+                               msample(cx + 0.f, cy * 2 + 1.5f));
             }
 
         // ── stats (right side) ──────────────────────────────────────────────

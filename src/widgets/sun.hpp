@@ -72,6 +72,14 @@ public:
                 float dd = std::abs(py - ay);
                 Col arc_col = gfx::mix(th.panel_border, sun_col, 0.55f);
                 col = gfx::mix(col, arc_col, gfx::smoothstep(0.7f, 0.08f, dd));
+                // travelled trail: the portion of today's arc the sun has
+                // already crossed glows warm, so the curve reads as a progress
+                // track — bright just behind the disc, fading back to sunrise.
+                if (daytime && t <= pc) {
+                    float behind = (pc - t) / std::max(0.02f, pc);   // 0 at sun .. 1 at rise
+                    float trail = gfx::smoothstep(1.1f, 0.f, dd) * (1.f - behind * 0.75f);
+                    col = gfx::add(col, gfx::scale(gfx::hex(0xffb454), trail * 0.45f));
+                }
             }
             // sun disc: limb-darkened core + radial glow, crisp edge
             float ds = std::hypot(px - sun_px, (py - sun_py));

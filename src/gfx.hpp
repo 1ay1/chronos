@@ -178,6 +178,7 @@ public:
 
     // -- rounded panel (frosted card) ----------------------------------------
     void panel(int x, int y, int w, int h, Col bg, Col border) {
+        shadow(x, y, w, h);   // soft drop shadow over whatever sits behind
         fill_cells(x, y, w, h, bg);
         uint16_t bs = text_style(border, bg);
         for (int xx = x + 1; xx < x + w - 1; ++xx) {
@@ -190,6 +191,40 @@ public:
         }
         cv_.set(x, y, U'\u256d', bs);              cv_.set(x + w - 1, y, U'\u256e', bs);
         cv_.set(x, y + h - 1, U'\u2570', bs);      cv_.set(x + w - 1, y + h - 1, U'\u256f', bs);
+    }
+
+    // -- soft drop shadow under a panel --------------------------------------
+    // Darkens the cells just below and to the right of a w×h box at (x,y),
+    // reading each existing cell and multiplying its colours down (the glyph is
+    // preserved, so the sky detail behind shows through, just dimmed). The
+    // falloff softens with distance from the panel edge so the card appears to
+    // float a little above the scene.
+    void shadow(int x, int y, int w, int h) {
+        auto dim = [&](int cx, int cy, float k) {
+            if (cx < 0 || cy < 0 || cx >= w_ || cy >= h_) return;
+            maya::Cell cell = maya::Cell::unpack(cv_.get_packed(cx, cy));
+            maya::Style s = pool_.get(cell.style_id);
+            auto scale_opt = [&](std::optional<maya::Color>& o) {
+                if (o && o->kind() == maya::Color::Kind::Rgb) {
+                    o = maya::Color::rgb(uint8_t(o->r() * k),
+                                         uint8_t(o->g() * k),
+                                         uint8_t(o->b() * k));
+                }
+            };
+            scale_opt(s.fg); scale_opt(s.bg);
+            cv_.set(cx, cy, cell.character ? cell.character : U' ', pool_.intern(s));
+        };
+        // two-cell-deep shadow: nearer band darker, outer band faint
+        for (int xx = x + 2; xx < x + w + 2; ++xx) {
+            dim(xx, y + h,     0.55f);   // directly below
+            dim(xx, y + h + 1, 0.78f);   // softer outer
+        }
+        for (int yy = y + 1; yy < y + h; ++yy) {
+            dim(x + w,     yy, 0.55f);   // right edge
+            dim(x + w + 1, yy, 0.78f);
+        }
+        // round off the corner where the two bands meet
+        dim(x + w, y + h, 0.50f);
     }
 
     // -- horizontal gauge bar (block fill) -----------------------------------
