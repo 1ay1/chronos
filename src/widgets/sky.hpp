@@ -13,6 +13,28 @@
 
 namespace chronos::ui {
 
+// ── live sky sample ───────────────────────────────────────────────────
+// SkyWidget publishes its posterized cell cache here every paint, so widgets
+// drawn OVER the sky (clock digits, date scrim) can composite against the REAL
+// animated backdrop — clouds, glow, stars — instead of the flat palette colour.
+// Without this, anything that bakes a backdrop goes stale the moment a cloud
+// drifts behind it (visible as mismatched boxes around the glyphs).
+inline const std::vector<gfx::Col>* g_sky_cells = nullptr;
+inline int g_sky_w = 0, g_sky_h = 0, g_sky_ox = 0, g_sky_oy = 0;
+
+// true + the cell's top/bottom sub-pixel colours when (cx,cy) is inside the
+// most recent sky paint; false when no sky has been painted (fallback needed).
+inline bool sky_live_cell(int cx, int cy, gfx::Col& top, gfx::Col& bot) {
+    if (!g_sky_cells) return false;
+    int lx = cx - g_sky_ox, ly = cy - g_sky_oy;
+    if (lx < 0 || ly < 0 || lx >= g_sky_w || ly >= g_sky_h) return false;
+    size_t i = (size_t(ly) * g_sky_w + lx) * 2;
+    if (i + 1 >= g_sky_cells->size()) return false;
+    top = (*g_sky_cells)[i];
+    bot = (*g_sky_cells)[i + 1];
+    return true;
+}
+
 // Keyframed sky palette by sun altitude (deg). Exposed so other widgets can
 // sample the sky colour behind their text for legible scrims.
 struct SkyBand { float alt; Col zenith; Col horizon; };
@@ -858,6 +880,10 @@ public:
                 size_t i = (size_t(cy) * r.w + cx) * 2;
                 p.cell(r.x + cx, r.y + cy, cache_[i], cache_[i + 1]);
             }
+
+        // publish the live cell colours for foreground widgets to composite on
+        g_sky_cells = &cache_; g_sky_w = r.w; g_sky_h = r.h;
+        g_sky_ox = r.x; g_sky_oy = r.y;
 
         // ── bird flock (daytime overlay) ───────────────────────────────────
         // A small V-formation of distant birds drifting across the upper sky.

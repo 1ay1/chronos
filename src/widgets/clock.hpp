@@ -94,11 +94,34 @@ public:
             font::draw_text_grad(cap, endx + 2.6f, secs_y, secs_q, ss, top_ink, bot_ink,
                                  skybg, 0.135f);
         }
-        // replay the cached glyph cells onto the real canvas
-        for (const CapCell& cc : hm_cells_)
-            p.glyph_cell(cc.cx, cc.cy, cc.glyph, cc.fg, cc.bg);
-        for (const CapCell& cc : ss_cells_)
-            p.glyph_cell(cc.cx, cc.cy, cc.glyph, cc.fg, cc.bg);
+        // Replay the cached glyph cells, re-compositing each onto the LIVE sky.
+        // The raster baked a flat palette backdrop (sky_bg); the real sky has
+        // clouds/glow drifting behind the digits, so using the baked bg paints
+        // stale mismatched boxes around the glyphs. At replay we substitute the
+        // backdrop with the sky widget's actual posterized cell colour — cheap
+        // (one array lookup per cell) and always matches what's behind.
+        auto replay = [&](const std::vector<CapCell>& cells) {
+            for (const CapCell& cc : cells) {
+                Col top, bot;
+                if (sky_live_cell(cc.cx, cc.cy, top, bot)) {
+                    Col lb = gfx::mix(top, bot, 0.5f);
+                    if (cc.fg.r == cc.bg.r && cc.fg.g == cc.bg.g && cc.fg.b == cc.bg.b) {
+                        // glow/tint cell: re-apply the baked glow delta on live sky
+                        Col bg0 = sky_bg(sun_alt, cc.cy, ph);
+                        Col lit{ gfx::clampf(lb.r + cc.fg.r - bg0.r, 0.f, 1.f),
+                                 gfx::clampf(lb.g + cc.fg.g - bg0.g, 0.f, 1.f),
+                                 gfx::clampf(lb.b + cc.fg.b - bg0.b, 0.f, 1.f) };
+                        p.glyph_cell(cc.cx, cc.cy, cc.glyph, lit, lit);
+                    } else {
+                        p.glyph_cell(cc.cx, cc.cy, cc.glyph, cc.fg, lb);
+                    }
+                } else {
+                    p.glyph_cell(cc.cx, cc.cy, cc.glyph, cc.fg, cc.bg);
+                }
+            }
+        };
+        replay(hm_cells_);
+        replay(ss_cells_);
 
         int date_y = int(by + em_q / 4.f) + 1;
         date_line(p, x, date_y, c, WD, MON, ink, bg);
@@ -121,12 +144,14 @@ private:
     void date_line(Painter& p, int x, int y, const Ctx& c,
                    const char* const* WD, const char* const* MON,
                    Col ink, BgFn&& bg) {
-        // A light, sky-tinted scrim (not a hard 40% black band) keeps the date
-        // readable without looking like a solid box under the digits.
+        // A light scrim over the LIVE sky (clouds included) keeps the date
+        // readable without painting a stale flat-colour box under the text.
         float sun_alt = (float)c.sun.altitude;
         auto soft = [&](int cx, int cy) {
-            (void)cx;
-            Col s = sky_bg(sun_alt, cy, p.rows() * 2);
+            Col top, bot;
+            Col s = sky_live_cell(cx, cy, top, bot)
+                  ? gfx::mix(top, bot, 0.5f)
+                  : sky_bg(sun_alt, cy, p.rows() * 2);
             return gfx::mix(s, Col{0,0,0}, 0.12f);
         };
         std::string d = std::format("{}  \u00b7  {} {}, {}",
