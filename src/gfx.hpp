@@ -129,16 +129,41 @@ public:
     // -- sub-pixel plot: write one of the two pixels in a cell ---------------
     // Reads the partner pixel from a shadow buffer so stacking a top over a
     // previously-set bottom keeps both. For widgets we mostly use cell()/rect.
+    //
+    // Robustness against bg-dropping terminals: a cell is normally a ▀ (upper-
+    // half block) with fg=top sub-pixel, bg=bottom sub-pixel. Some terminals —
+    // notably mobile SSH clients that insert vertical cell padding — under-
+    // render or drop a cell's BACKGROUND colour, which turns a smooth ▀ gradient
+    // into hard horizontal stripes (every cell's bottom half collapses to the
+    // default bg). The fix that does NOT cost vertical resolution: only when the
+    // two sub-pixels already quantize to the SAME colour (the common case across
+    // the smooth dome) emit a █ full block carrying that colour in BOTH fg and
+    // bg. The █ paints the whole cell from the FOREGROUND, so it survives even
+    // if the bg is dropped — no stripe. Cells whose halves genuinely differ
+    // (clouds, horizon, water, glyph edges) keep the ▀ and their full vertical
+    // resolution. On a correct terminal █(fg=bg) and ▀(fg=bg) are pixel-
+    // identical, so the dome looks exactly the same as before everywhere.
     void cell(int cx, int cy, Col top, Col bot) {
-        cv_.set(cx, cy, U'\u2580', cell_style(top, bot));
+        uint8_t tr = q(top.r), tg = q(top.g), tb = q(top.b);
+        uint8_t br = q(bot.r), bg = q(bot.g), bb = q(bot.b);
+        if (tr == br && tg == bg && tb == bb) {
+            // uniform cell → gap-safe full block (colour in fg AND bg, so
+            // frost()/bg_at()/shadow() can still read it back when compositing).
+            cv_.set(cx, cy, U'\u2588', pool_.intern(maya::Style{}
+                .with_fg(maya::Color::rgb(tr, tg, tb))
+                .with_bg(maya::Color::rgb(tr, tg, tb))));
+        } else {
+            cv_.set(cx, cy, U'\u2580', pool_.intern(maya::Style{}
+                .with_fg(maya::Color::rgb(tr, tg, tb))
+                .with_bg(maya::Color::rgb(br, bg, bb))));
+        }
     }
 
     // full-resolution filled rect in *cell* space, uniform colour
     void fill_cells(int x, int y, int w, int h, Col c) {
-        uint16_t st = cell_style(c, c);
         for (int yy = y; yy < y + h; ++yy)
             for (int xx = x; xx < x + w; ++xx)
-                cv_.set(xx, yy, U'\u2580', st);
+                cell(xx, yy, c, c);   // equal halves → gap-safe full block
     }
 
     // a single solid character cell (space) used for text backgrounds
@@ -243,7 +268,12 @@ public:
                 // top-down inner glow: brighter sheen near the top edge, fading
                 float sheen = (1.f - vt) * (1.f - vt) * 0.10f;
                 glass = gfx::add(glass, Col{sheen, sheen, sheen*1.15f});
-                cv_.set(xx, yy, U'\u2580', cell_style(glass, glass));
+                // gap-safe full block: the glass colour lives in BOTH fg and bg
+                // so the pane survives bg-dropping terminals (the █ fills the
+                // whole cell from the foreground, no horizontal stripe) while
+                // bg_at()/frost_at() can still read the tint back when
+                // compositing discs/borders over the glass.
+                cv_.set(xx, yy, U'\u2588', cell_style(glass, glass));
             }
         }
     }
